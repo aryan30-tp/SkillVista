@@ -4,15 +4,19 @@ const connectDB = async () => {
   const mongoUri = process.env.MONGODB_URI;
 
   if (!mongoUri) {
-    console.warn("MONGODB_URI not set. Running without a database connection.");
+    console.warn("⚠️  MONGODB_URI not set. Running without a database connection.");
     return;
   }
 
   try {
-    await mongoose.connect(mongoUri);
-    console.log("MongoDB connected");
+    await mongoose.connect(mongoUri, {
+      retryWrites: true,
+      w: "majority",
+      maxPoolSize: 10,
+    });
+    console.log("✅ MongoDB connected successfully");
   } catch (error) {
-    console.error("MongoDB connection failed:", error.message);
+    console.error("❌ MongoDB connection failed:", error.message);
     process.exit(1);
   }
 };
