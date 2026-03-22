@@ -18,6 +18,48 @@ const userSchema = new mongoose.Schema(
       type: String,
       required: true,
       minlength: 6
+    },
+    githubId: {
+      type: String,
+      unique: true,
+      sparse: true,
+      default: null
+    },
+    githubAccessToken: {
+      type: String,
+      default: null
+    },
+    githubUsername: {
+      type: String,
+      default: null
+    },
+    skills: [
+      {
+        skillId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Skill"
+        },
+        confidenceScore: {
+          type: Number,
+          min: 0,
+          max: 1,
+          default: 0.5
+        },
+        detectedInRepos: [String]
+      }
+    ],
+    skillExtractionStatus: {
+      type: String,
+      enum: ["pending", "in-progress", "completed", "failed"],
+      default: "pending"
+    },
+    lastSkillSync: {
+      type: Date,
+      default: null
+    },
+    repositoryCount: {
+      type: Number,
+      default: 0
     }
   },
   {
