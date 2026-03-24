@@ -13,7 +13,7 @@ import { useRouter } from "expo-router";
 import { useState } from "react";
 
 export default function SettingsScreen() {
-  const { logout, user } = useAuth();
+  const { logout, user, disconnectGitHub } = useAuth();
   const router = useRouter();
   const [autoSync, setAutoSync] = useState(false);
   const [notifications, setNotifications] = useState(true);
@@ -50,8 +50,13 @@ export default function SettingsScreen() {
         },
         {
           text: "Disconnect",
-          onPress: () => {
-            Alert.alert("Success", "GitHub account disconnected");
+          onPress: async () => {
+            try {
+              await disconnectGitHub();
+              Alert.alert("Success", "GitHub account disconnected");
+            } catch (error: any) {
+              Alert.alert("Error", error.message || "Failed to disconnect GitHub");
+            }
           },
           style: "destructive"
         }

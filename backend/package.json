@@ -12,6 +12,8 @@
     "node": "20.x"
   },
   "dependencies": {
+    "@octokit/rest": "^22.0.1",
+    "axios": "^1.13.6",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",

@@ -12,7 +12,7 @@ import { useAuth } from "../../context/AuthContext";
 import api from "../../utils/api";
 
 export default function ProfileScreen() {
-  const { user } = useAuth();
+  const { user, connectGitHub, refreshUser } = useAuth();
   const [loading, setLoading] = useState(false);
   const [syncStatus, setSyncStatus] = useState("idle");
 
@@ -20,7 +20,8 @@ export default function ProfileScreen() {
     try {
       setLoading(true);
       setSyncStatus("syncing");
-      const response = await api.post("/github/sync-skills");
+      await api.post("/github/sync-skills");
+      await refreshUser();
       Alert.alert("Success", "Skills synced successfully!");
       setSyncStatus("completed");
     } catch (error: any) {
@@ -35,10 +36,16 @@ export default function ProfileScreen() {
   };
 
   const handleConnectGitHub = async () => {
-    Alert.alert(
-      "GitHub Connection",
-      "GitHub OAuth integration will be implemented in Phase 2"
-    );
+    try {
+      setLoading(true);
+      await connectGitHub();
+      await refreshUser();
+      Alert.alert("Success", "GitHub connected successfully");
+    } catch (error: any) {
+      Alert.alert("Connection Failed", error.message || "Failed to connect GitHub");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const isGitHubConnected = user?.githubId;
@@ -64,7 +71,7 @@ export default function ProfileScreen() {
             <View style={styles.connectedContent}>
               <Text style={styles.connectedText}>GitHub Connected</Text>
               <Text style={styles.connectedSubtext}>
-                Username: {user?.githubUsername || "Loading..."}
+                Username: {user?.githubUsername || "Unknown"}
               </Text>
             </View>
           </View>

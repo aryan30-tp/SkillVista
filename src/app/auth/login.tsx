@@ -41,6 +41,13 @@ export default function LoginScreen() {
 
   const isLoading = loading || localLoading;
 
+  const handleGitHubInfo = () => {
+    Alert.alert(
+      "Connect GitHub",
+      "Sign in first, then connect your GitHub account from the Profile tab."
+    );
+  };
+
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Welcome Back</Text>
@@ -81,7 +88,11 @@ export default function LoginScreen() {
 
       <Text style={styles.dividerText}>or continue with</Text>
 
-      <TouchableOpacity style={styles.githubButton} disabled={isLoading}>
+      <TouchableOpacity
+        style={styles.githubButton}
+        disabled={isLoading}
+        onPress={handleGitHubInfo}
+      >
         <Text style={styles.githubButtonText}>Login with GitHub</Text>
       </TouchableOpacity>
     </View>

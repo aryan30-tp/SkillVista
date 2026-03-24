@@ -1,8 +1,16 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const axios = require("axios");
+const { Octokit } = require("@octokit/rest");
 const User = require("../../models/User");
 const auth = require("../middleware/auth");
+const {
+  GITHUB_CLIENT_ID,
+  GITHUB_CLIENT_SECRET,
+  GITHUB_REDIRECT_URI,
+  hasGitHubConfig
+} = require("../config/github");
 
 const router = express.Router();
 
@@ -126,7 +134,18 @@ router.get("/me", auth, async (req, res) => {
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
-    res.json(user);
+    res.json({
+      id: user._id,
+      name: user.name,
+      email: user.email,
+      githubId: user.githubId,
+      githubUsername: user.githubUsername,
+      skillExtractionStatus: user.skillExtractionStatus,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+      repositoryCount: user.repositoryCount,
+      lastSkillSync: user.lastSkillSync
+    });
   } catch (error) {
     console.error("Get user error:", error);
     res.status(500).json({ error: "Internal server error" });
@@ -138,6 +157,111 @@ router.post("/logout", auth, (req, res) => {
   // For JWT, logout is mainly handled on the client by removing the token
   // In production, you might want to blacklist the token in Redis
   res.json({ message: "Logged out successfully" });
+});
+
+router.get("/github/url", auth, (_req, res) => {
+  if (!hasGitHubConfig()) {
+    return res.status(500).json({
+      error: "GitHub OAuth is not configured on the server"
+    });
+  }
+
+  const scope = "read:user user:email repo read:org";
+  const authUrl =
+    `https://github.com/login/oauth/authorize?client_id=${encodeURIComponent(GITHUB_CLIENT_ID)}` +
+    `&redirect_uri=${encodeURIComponent(GITHUB_REDIRECT_URI)}` +
+    `&scope=${encodeURIComponent(scope)}`;
+
+  return res.json({ authUrl, redirectUri: GITHUB_REDIRECT_URI });
+});
+
+router.post("/github/callback", auth, async (req, res) => {
+  try {
+    if (!hasGitHubConfig()) {
+      return res.status(500).json({
+        error: "GitHub OAuth is not configured on the server"
+      });
+    }
+
+    const { code } = req.body;
+    if (!code) {
+      return res.status(400).json({ error: "GitHub authorization code is required" });
+    }
+
+    const tokenResponse = await axios.post(
+      "https://github.com/login/oauth/access_token",
+      {
+        client_id: GITHUB_CLIENT_ID,
+        client_secret: GITHUB_CLIENT_SECRET,
+        code,
+        redirect_uri: GITHUB_REDIRECT_URI
+      },
+      {
+        headers: {
+          Accept: "application/json"
+        }
+      }
+    );
+
+    if (!tokenResponse.data?.access_token) {
+      return res.status(400).json({ error: "Failed to exchange GitHub code" });
+    }
+
+    const githubAccessToken = tokenResponse.data.access_token;
+    const octokit = new Octokit({ auth: githubAccessToken });
+    const { data: githubUser } = await octokit.users.getAuthenticated();
+
+    const user = await User.findById(req.userId);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    user.githubAccessToken = githubAccessToken;
+    user.githubId = String(githubUser.id);
+    user.githubUsername = githubUser.login;
+
+    await user.save();
+
+    return res.json({
+      message: "GitHub connected successfully",
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        githubId: user.githubId,
+        githubUsername: user.githubUsername,
+        skillExtractionStatus: user.skillExtractionStatus,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt
+      }
+    });
+  } catch (error) {
+    console.error("GitHub callback error:", error.message);
+    return res.status(500).json({ error: "Failed to connect GitHub account" });
+  }
+});
+
+router.post("/github/disconnect", auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.userId);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    user.githubAccessToken = null;
+    user.githubId = null;
+    user.githubUsername = null;
+    user.skillExtractionStatus = "pending";
+    user.repositoryCount = 0;
+    user.lastSkillSync = null;
+    user.skills = [];
+    await user.save();
+
+    return res.json({ message: "GitHub disconnected successfully" });
+  } catch (error) {
+    console.error("GitHub disconnect error:", error.message);
+    return res.status(500).json({ error: "Failed to disconnect GitHub" });
+  }
 });
 
 module.exports = router;
