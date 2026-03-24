@@ -20,15 +20,22 @@ export default function ProfileScreen() {
     try {
       setLoading(true);
       setSyncStatus("syncing");
-      await api.post("/github/sync-skills");
+      await api.post("/github/sync-skills", {}, { timeout: 120000 });
       await refreshUser();
       Alert.alert("Success", "Skills synced successfully!");
       setSyncStatus("completed");
     } catch (error: any) {
+      if (error?.code === "ECONNABORTED") {
+        Alert.alert(
+          "Sync Taking Longer",
+          "Skill extraction is still running on the server. Wait a bit, then refresh profile and skills."
+        );
+      } else {
       Alert.alert(
         "Sync Failed",
         error.response?.data?.error || "Failed to sync skills"
       );
+      }
       setSyncStatus("error");
     } finally {
       setLoading(false);

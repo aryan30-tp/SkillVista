@@ -228,7 +228,9 @@ router.post("/sync-skills", auth, async (req, res) => {
       // no-op
     }
 
-    res.status(500).json({ error: "Failed to sync skills from GitHub" });
+    res.status(500).json({
+      error: `Failed to sync skills from GitHub: ${error.message}`
+    });
   }
 });
 
