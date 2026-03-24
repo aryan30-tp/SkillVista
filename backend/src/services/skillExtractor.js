@@ -1,12 +1,20 @@
 const skillKeywords = require("../data/skillKeywords");
 
 const languageSkillMap = {
+  Node: { name: "Node.js", category: "backend", confidence: 0.9 },
   JavaScript: { name: "JavaScript", category: "language", confidence: 0.85 },
   TypeScript: { name: "TypeScript", category: "language", confidence: 0.95 },
   Python: { name: "Python", category: "language", confidence: 0.9 },
   Java: { name: "Java", category: "language", confidence: 0.85 },
+  C: { name: "C", category: "language", confidence: 0.85 },
   Go: { name: "Go", category: "language", confidence: 0.85 },
   Rust: { name: "Rust", category: "language", confidence: 0.9 },
+  Dart: { name: "Dart", category: "language", confidence: 0.9 },
+  Scala: { name: "Scala", category: "language", confidence: 0.9 },
+  R: { name: "R", category: "language", confidence: 0.85 },
+  Shell: { name: "Shell", category: "language", confidence: 0.8 },
+  Lua: { name: "Lua", category: "language", confidence: 0.85 },
+  Perl: { name: "Perl", category: "language", confidence: 0.85 },
   PHP: { name: "PHP", category: "language", confidence: 0.85 },
   Ruby: { name: "Ruby", category: "language", confidence: 0.85 },
   Kotlin: { name: "Kotlin", category: "language", confidence: 0.85 },
@@ -14,6 +22,22 @@ const languageSkillMap = {
   "C#": { name: "C#", category: "language", confidence: 0.85 },
   "C++": { name: "C++", category: "language", confidence: 0.85 }
 };
+
+const NODE_BACKEND_PACKAGES = new Set([
+  "express",
+  "fastify",
+  "koa",
+  "hapi",
+  "nestjs",
+  "@nestjs/core",
+  "graphql",
+  "apollo-server",
+  "mongoose",
+  "sequelize",
+  "prisma",
+  "typeorm",
+  "knex"
+]);
 
 const IMPORT_REGEX_PATTERNS = [
   /import\s+[^"']+\s+from\s+["']([^"']+)["']/g,
@@ -120,6 +144,32 @@ const extractSkillsFromRepo = (repoData) => {
 
   for (const pkg of importPackages) {
     addMapped(pkg, "import");
+  }
+
+  const allNodePackages = new Set([
+    ...dependencies.map((dep) => normalizePackageName(dep)),
+    ...devDependencies.map((dep) => normalizePackageName(dep)),
+    ...importPackages.map((pkg) => normalizePackageName(pkg))
+  ]);
+
+  const hasNodeBackendSignals = Array.from(allNodePackages).some((pkg) =>
+    NODE_BACKEND_PACKAGES.has(pkg)
+  );
+
+  const hasNodeEcosystem =
+    Boolean(repoData.hasPackageJson) ||
+    allNodePackages.size > 0 ||
+    repoData.language === "JavaScript" ||
+    repoData.language === "TypeScript";
+
+  if (hasNodeEcosystem && (hasNodeBackendSignals || repoData.language === "JavaScript" || repoData.language === "TypeScript")) {
+    extracted.push({
+      name: "Node.js",
+      category: "backend",
+      confidence: hasNodeBackendSignals ? 0.95 : 0.8,
+      keyword: "nodejs",
+      sourceType: "runtime"
+    });
   }
 
   if (repoData.language && languageSkillMap[repoData.language]) {

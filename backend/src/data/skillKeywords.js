@@ -697,6 +697,236 @@ const skillKeywords = {
     name: "State Management",
     category: "frontend",
     confidence: 0.8
+  },
+
+  // App & Mobile Development
+  flutter: {
+    name: "Flutter",
+    category: "mobile",
+    confidence: 0.95
+  },
+  dart: {
+    name: "Dart",
+    category: "language",
+    confidence: 0.9
+  },
+  ionic: {
+    name: "Ionic",
+    category: "mobile",
+    confidence: 0.85
+  },
+  xamarin: {
+    name: "Xamarin",
+    category: "mobile",
+    confidence: 0.85
+  },
+  android: {
+    name: "Android",
+    category: "app-development",
+    confidence: 0.85
+  },
+  ios: {
+    name: "iOS",
+    category: "app-development",
+    confidence: 0.85
+  },
+
+  // AI / Machine Learning
+  tensorflow: {
+    name: "TensorFlow",
+    category: "ai-ml",
+    confidence: 1.0
+  },
+  "tensorflow-cpu": {
+    name: "TensorFlow",
+    category: "ai-ml",
+    confidence: 0.95
+  },
+  pytorch: {
+    name: "PyTorch",
+    category: "ai-ml",
+    confidence: 1.0
+  },
+  torch: {
+    name: "PyTorch",
+    category: "ai-ml",
+    confidence: 1.0
+  },
+  keras: {
+    name: "Keras",
+    category: "ai-ml",
+    confidence: 0.95
+  },
+  "scikit-learn": {
+    name: "Scikit-learn",
+    category: "ai-ml",
+    confidence: 0.95
+  },
+  sklearn: {
+    name: "Scikit-learn",
+    category: "ai-ml",
+    confidence: 0.95
+  },
+  "opencv-python": {
+    name: "OpenCV",
+    category: "ai-ml",
+    confidence: 0.9
+  },
+  opencv: {
+    name: "OpenCV",
+    category: "ai-ml",
+    confidence: 0.9
+  },
+  xgboost: {
+    name: "XGBoost",
+    category: "ai-ml",
+    confidence: 0.9
+  },
+  lightgbm: {
+    name: "LightGBM",
+    category: "ai-ml",
+    confidence: 0.9
+  },
+  huggingface: {
+    name: "Hugging Face",
+    category: "ai-ml",
+    confidence: 0.9
+  },
+  transformers: {
+    name: "Transformers",
+    category: "ai-ml",
+    confidence: 0.95
+  },
+
+  // Data Science
+  numpy: {
+    name: "NumPy",
+    category: "data-science",
+    confidence: 0.95
+  },
+  pandas: {
+    name: "Pandas",
+    category: "data-science",
+    confidence: 0.95
+  },
+  scipy: {
+    name: "SciPy",
+    category: "data-science",
+    confidence: 0.9
+  },
+  matplotlib: {
+    name: "Matplotlib",
+    category: "data-science",
+    confidence: 0.9
+  },
+  seaborn: {
+    name: "Seaborn",
+    category: "data-science",
+    confidence: 0.9
+  },
+  jupyter: {
+    name: "Jupyter",
+    category: "data-science",
+    confidence: 0.9
+  },
+  pyspark: {
+    name: "PySpark",
+    category: "data-science",
+    confidence: 0.9
+  },
+  tableau: {
+    name: "Tableau",
+    category: "data-science",
+    confidence: 0.85
+  },
+  powerbi: {
+    name: "Power BI",
+    category: "data-science",
+    confidence: 0.85
+  },
+
+  // Cybersecurity
+  nmap: {
+    name: "Nmap",
+    category: "cybersecurity",
+    confidence: 0.9
+  },
+  wireshark: {
+    name: "Wireshark",
+    category: "cybersecurity",
+    confidence: 0.9
+  },
+  burpsuite: {
+    name: "Burp Suite",
+    category: "cybersecurity",
+    confidence: 0.9
+  },
+  metasploit: {
+    name: "Metasploit",
+    category: "cybersecurity",
+    confidence: 0.9
+  },
+  "kali-linux": {
+    name: "Kali Linux",
+    category: "cybersecurity",
+    confidence: 0.9
+  },
+  owasp: {
+    name: "OWASP",
+    category: "cybersecurity",
+    confidence: 0.85
+  },
+
+  // Additional language signals
+  nodejs: {
+    name: "Node.js",
+    category: "backend",
+    confidence: 0.95
+  },
+  python3: {
+    name: "Python",
+    category: "language",
+    confidence: 0.9
+  },
+  cpp: {
+    name: "C++",
+    category: "language",
+    confidence: 0.9
+  },
+  "g++": {
+    name: "C++",
+    category: "language",
+    confidence: 0.85
+  },
+  openjdk: {
+    name: "Java",
+    category: "language",
+    confidence: 0.85
+  },
+  springboot: {
+    name: "Spring Boot",
+    category: "backend",
+    confidence: 0.95
+  },
+  "spring-boot-starter-web": {
+    name: "Spring Boot",
+    category: "backend",
+    confidence: 0.95
+  },
+  "spring-boot-starter-data-jpa": {
+    name: "Spring Boot",
+    category: "backend",
+    confidence: 0.9
+  },
+  djangorestframework: {
+    name: "Django",
+    category: "backend",
+    confidence: 0.95
+  },
+  flaskrestful: {
+    name: "Flask",
+    category: "backend",
+    confidence: 0.9
   }
 };
 

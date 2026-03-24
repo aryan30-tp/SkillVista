@@ -56,6 +56,11 @@ export default function KnowledgeMapScreen() {
       database: "#FF9500",
       devops: "#A2845E",
       language: "#5856D6",
+      mobile: "#14B8A6",
+      "app-development": "#0EA5E9",
+      "ai-ml": "#EC4899",
+      "data-science": "#22C55E",
+      cybersecurity: "#EF4444",
       tool: "#FF3B30",
       other: "#999"
     };

@@ -4,6 +4,8 @@ const { Octokit } = require("@octokit/rest");
 const auth = require("../middleware/auth");
 const User = require("../../models/User");
 const Skill = require("../../models/Skill");
+const skillKeywords = require("../data/skillKeywords");
+const manualSkills = require("../data/manualSkills");
 const {
   extractImportsFromSource,
   extractSkillsFromRepo,
@@ -14,6 +16,22 @@ const {
 const router = express.Router();
 
 const MAX_REPOS = 50;
+const REPO_ANALYSIS_CONCURRENCY = 4;
+const SKILL_UPSERT_CONCURRENCY = 8;
+const VALID_CATEGORIES = [
+  "frontend",
+  "backend",
+  "database",
+  "devops",
+  "language",
+  "mobile",
+  "ai-ml",
+  "data-science",
+  "cybersecurity",
+  "app-development",
+  "tool",
+  "other"
+];
 const CODE_FILE_CANDIDATES = [
   "index.js",
   "app.js",
@@ -30,9 +48,87 @@ const CODE_FILE_CANDIDATES = [
   "src/main.ts",
   "src/main.tsx"
 ];
+const MANIFEST_CANDIDATES = [
+  "requirements.txt",
+  "pyproject.toml",
+  "pom.xml",
+  "build.gradle",
+  "build.gradle.kts",
+  "backend/requirements.txt",
+  "backend/pyproject.toml",
+  "backend/pom.xml",
+  "backend/build.gradle",
+  "backend/build.gradle.kts",
+  "server/requirements.txt",
+  "server/pyproject.toml",
+  "server/pom.xml",
+  "server/build.gradle",
+  "server/build.gradle.kts",
+  "api/requirements.txt",
+  "api/pyproject.toml",
+  "api/pom.xml",
+  "api/build.gradle",
+  "api/build.gradle.kts"
+];
 
 const getOctokit = (token) => {
   return new Octokit({ auth: token });
+};
+
+const mapWithConcurrency = async (items, concurrency, mapper) => {
+  const results = new Array(items.length);
+  let currentIndex = 0;
+
+  const worker = async () => {
+    while (currentIndex < items.length) {
+      const index = currentIndex;
+      currentIndex += 1;
+      results[index] = await mapper(items[index], index);
+    }
+  };
+
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+};
+
+const buildSkillOptions = () => {
+  const optionsMap = new Map();
+
+  for (const value of Object.values(skillKeywords)) {
+    if (!value?.name || !value?.category) {
+      continue;
+    }
+
+    const key = value.name.toLowerCase();
+    if (!optionsMap.has(key)) {
+      optionsMap.set(key, {
+        name: value.name,
+        category: VALID_CATEGORIES.includes(value.category) ? value.category : "other"
+      });
+    }
+  }
+
+  for (const item of manualSkills) {
+    if (!item?.name || !item?.category) {
+      continue;
+    }
+
+    const key = item.name.toLowerCase();
+    if (!optionsMap.has(key)) {
+      optionsMap.set(key, {
+        name: item.name,
+        category: VALID_CATEGORIES.includes(item.category) ? item.category : "other"
+      });
+    }
+  }
+
+  return Array.from(optionsMap.values()).sort((a, b) => {
+    if (a.category === b.category) {
+      return a.name.localeCompare(b.name);
+    }
+    return a.category.localeCompare(b.category);
+  });
 };
 
 const fetchPackageJson = async (octokit, owner, repo) => {
@@ -52,6 +148,146 @@ const fetchPackageJson = async (octokit, owner, repo) => {
   } catch (error) {
     return null;
   }
+};
+
+const fetchTextFile = async (octokit, owner, repo, path) => {
+  try {
+    const response = await octokit.repos.getContent({ owner, repo, path });
+
+    if (!response.data || Array.isArray(response.data) || !response.data.content) {
+      return null;
+    }
+
+    return Buffer.from(response.data.content, "base64").toString("utf8");
+  } catch (error) {
+    return null;
+  }
+};
+
+const parseRequirementToken = (value) => {
+  if (!value) {
+    return "";
+  }
+
+  const cleaned = value.trim();
+  if (!cleaned || cleaned.startsWith("#") || cleaned.startsWith("-")) {
+    return "";
+  }
+
+  const match = cleaned.match(/^([A-Za-z0-9_.-]+)/);
+  return normalizePackageName(match ? match[1] : "");
+};
+
+const parseRequirementsTxt = (content) => {
+  const deps = new Set();
+  const lines = content.split(/\r?\n/);
+
+  for (const line of lines) {
+    const dep = parseRequirementToken(line);
+    if (dep) {
+      deps.add(dep);
+    }
+  }
+
+  return Array.from(deps);
+};
+
+const parsePyprojectToml = (content) => {
+  const deps = new Set();
+
+  const dependenciesArrayMatches = content.matchAll(/dependencies\s*=\s*\[((?:.|\n)*?)\]/g);
+  for (const match of dependenciesArrayMatches) {
+    const block = match[1] || "";
+    const quotedValues = block.matchAll(/["']([^"']+)["']/g);
+    for (const quoted of quotedValues) {
+      const dep = parseRequirementToken(quoted[1]);
+      if (dep) {
+        deps.add(dep);
+      }
+    }
+  }
+
+  const poetrySection = content.match(/\[tool\.poetry\.dependencies\]([\s\S]*?)(\n\[|$)/);
+  if (poetrySection?.[1]) {
+    const lines = poetrySection[1].split(/\r?\n/);
+    for (const line of lines) {
+      const match = line.match(/^\s*([A-Za-z0-9_.-]+)\s*=/);
+      if (!match) {
+        continue;
+      }
+      const pkg = normalizePackageName(match[1]);
+      if (pkg && pkg !== "python") {
+        deps.add(pkg);
+      }
+    }
+  }
+
+  return Array.from(deps);
+};
+
+const parsePomXml = (content) => {
+  const deps = new Set();
+  const matches = content.matchAll(/<artifactId>\s*([^<\s]+)\s*<\/artifactId>/g);
+
+  for (const match of matches) {
+    const dep = normalizePackageName(match[1]);
+    if (dep) {
+      deps.add(dep);
+    }
+  }
+
+  return Array.from(deps);
+};
+
+const parseGradle = (content) => {
+  const deps = new Set();
+  const pattern =
+    /(?:implementation|api|compileOnly|runtimeOnly|testImplementation)\s*(?:\(|\s)\s*["']([^"']+)["']/g;
+
+  let match = pattern.exec(content);
+  while (match) {
+    const notation = match[1] || "";
+    const parts = notation.split(":");
+    const artifact = parts.length >= 2 ? parts[1] : parts[0];
+    const dep = normalizePackageName(artifact);
+    if (dep) {
+      deps.add(dep);
+    }
+    match = pattern.exec(content);
+  }
+
+  pattern.lastIndex = 0;
+  return Array.from(deps);
+};
+
+const fetchEcosystemDependencies = async (octokit, owner, repo) => {
+  const deps = new Set();
+
+  for (const manifestPath of MANIFEST_CANDIDATES) {
+    const content = await fetchTextFile(octokit, owner, repo, manifestPath);
+    if (!content) {
+      continue;
+    }
+
+    let parsed = [];
+    if (manifestPath.endsWith("requirements.txt")) {
+      parsed = parseRequirementsTxt(content);
+    } else if (manifestPath.endsWith("pyproject.toml")) {
+      parsed = parsePyprojectToml(content);
+    } else if (manifestPath.endsWith("pom.xml")) {
+      parsed = parsePomXml(content);
+    } else if (manifestPath.endsWith("build.gradle") || manifestPath.endsWith("build.gradle.kts")) {
+      parsed = parseGradle(content);
+    }
+
+    for (const dep of parsed) {
+      if (dep) {
+        deps.add(dep);
+      }
+    }
+  }
+
+  return Array.from(deps);
 };
 
 const fetchImportsFromRepo = async (octokit, owner, repo) => {
@@ -91,6 +327,7 @@ const buildRepoAnalysis = async (octokit, repo) => {
 
   const pkg = await fetchPackageJson(octokit, owner, repoName);
   const importPackages = await fetchImportsFromRepo(octokit, owner, repoName);
+  const ecosystemDependencies = await fetchEcosystemDependencies(octokit, owner, repoName);
 
   return {
     id: repo.id,
@@ -103,6 +340,7 @@ const buildRepoAnalysis = async (octokit, repo) => {
     stargazersCount: repo.stargazers_count,
     dependencies: pkg ? Object.keys(pkg.dependencies || {}) : [],
     devDependencies: pkg ? Object.keys(pkg.devDependencies || {}) : [],
+    ecosystemDependencies,
     importPackages,
     hasPackageJson: Boolean(pkg)
   };
@@ -143,6 +381,87 @@ router.get("/repos", auth, async (req, res) => {
   }
 });
 
+router.get("/skill-options", auth, async (_req, res) => {
+  try {
+    const options = buildSkillOptions();
+    res.json(options);
+  } catch (error) {
+    console.error("Skill options error:", error.message);
+    res.status(500).json({ error: "Failed to fetch skill options" });
+  }
+});
+
+router.post("/manual-skill", auth, async (req, res) => {
+  try {
+    const { name, category } = req.body;
+
+    if (!name || !category) {
+      return res.status(400).json({ error: "Name and category are required" });
+    }
+
+    if (!VALID_CATEGORIES.includes(category)) {
+      return res.status(400).json({ error: "Invalid skill category" });
+    }
+
+    const user = await User.findById(req.userId);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const normalizedName = String(name).trim().toLowerCase();
+    if (!normalizedName) {
+      return res.status(400).json({ error: "Invalid skill name" });
+    }
+
+    const skillDoc = await Skill.findOneAndUpdate(
+      { name: normalizedName },
+      {
+        $setOnInsert: {
+          name: normalizedName,
+          category,
+          keywords: [normalizedName],
+          baseConfidence: 0.75
+        }
+      },
+      { new: true, upsert: true }
+    );
+
+    const alreadyExists = user.skills.some((entry) => {
+      return String(entry.skillId) === String(skillDoc._id);
+    });
+
+    if (alreadyExists) {
+      return res.json({
+        message: "Skill already added",
+        existing: true
+      });
+    }
+
+    user.skills.push({
+      skillId: skillDoc._id,
+      confidenceScore: 0.75,
+      detectedInRepos: ["manual"]
+    });
+
+    await user.save();
+
+    return res.json({
+      message: "Skill added successfully",
+      existing: false,
+      skill: {
+        _id: skillDoc._id,
+        name: skillDoc.name,
+        category: skillDoc.category,
+        confidenceScore: 0.75,
+        detectedInRepos: ["manual"]
+      }
+    });
+  } catch (error) {
+    console.error("Add manual skill error:", error.message);
+    return res.status(500).json({ error: "Failed to add manual skill" });
+  }
+});
+
 router.post("/sync-skills", auth, async (req, res) => {
   try {
     const user = await User.findById(req.userId);
@@ -165,45 +484,54 @@ router.post("/sync-skills", auth, async (req, res) => {
       per_page: MAX_REPOS
     });
 
-    const repoSkillData = [];
-    for (const repo of repos) {
-      const analysis = await buildRepoAnalysis(octokit, repo);
-      const skills = extractSkillsFromRepo({
-        dependencies: analysis.dependencies,
-        devDependencies: analysis.devDependencies,
-        importPackages: analysis.importPackages,
-        language: analysis.language
-      });
+    const repoSkillData = await mapWithConcurrency(
+      repos,
+      REPO_ANALYSIS_CONCURRENCY,
+      async (repo) => {
+        const analysis = await buildRepoAnalysis(octokit, repo);
+        const skills = extractSkillsFromRepo({
+          dependencies: [...analysis.dependencies, ...analysis.ecosystemDependencies],
+          devDependencies: analysis.devDependencies,
+          importPackages: analysis.importPackages,
+          language: analysis.language,
+          hasPackageJson: analysis.hasPackageJson
+        });
 
-      repoSkillData.push({
-        repoName: analysis.fullName,
-        skills
-      });
-    }
+        return {
+          repoName: analysis.fullName,
+          skills
+        };
+      }
+    );
 
     const aggregatedSkills = aggregateSkillsAcrossRepos(repoSkillData);
 
-    const userSkills = [];
-    for (const skillEntry of aggregatedSkills) {
-      const doc = await Skill.findOneAndUpdate(
-        { name: skillEntry.name.toLowerCase() },
-        {
-          $set: {
-            name: skillEntry.name.toLowerCase(),
-            category: skillEntry.category,
-            keywords: [skillEntry.name.toLowerCase()],
-            baseConfidence: skillEntry.confidenceScore
-          }
-        },
-        { new: true, upsert: true }
-      );
+    const skillDocs = await mapWithConcurrency(
+      aggregatedSkills,
+      SKILL_UPSERT_CONCURRENCY,
+      async (skillEntry) => {
+        const doc = await Skill.findOneAndUpdate(
+          { name: skillEntry.name.toLowerCase() },
+          {
+            $set: {
+              name: skillEntry.name.toLowerCase(),
+              category: skillEntry.category,
+              keywords: [skillEntry.name.toLowerCase()],
+              baseConfidence: skillEntry.confidenceScore
+            }
+          },
+          { new: true, upsert: true }
+        );
 
-      userSkills.push({
-        skillId: doc._id,
-        confidenceScore: skillEntry.confidenceScore,
-        detectedInRepos: skillEntry.detectedInRepos
-      });
-    }
+        return {
+          skillId: doc._id,
+          confidenceScore: skillEntry.confidenceScore,
+          detectedInRepos: skillEntry.detectedInRepos
+        };
+      }
+    );
+
+    const userSkills = skillDocs;
 
     user.skills = userSkills;
     user.repositoryCount = repos.length;

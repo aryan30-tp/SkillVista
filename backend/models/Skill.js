@@ -17,6 +17,11 @@ const skillSchema = new mongoose.Schema(
         "database",
         "devops",
         "language",
+        "mobile",
+        "ai-ml",
+        "data-science",
+        "cybersecurity",
+        "app-development",
         "tool",
         "other"
       ],
