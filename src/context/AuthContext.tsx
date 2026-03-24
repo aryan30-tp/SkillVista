@@ -197,7 +197,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const connectGitHub = async () => {
     try {
-      const response = await api.get("/auth/github/url");
+      const runtimeRedirectUri = Linking.createURL("github-auth-callback");
+      const response = await api.get("/auth/github/url", {
+        params: {
+          mobileRedirectUri: runtimeRedirectUri
+        }
+      });
       const { authUrl, redirectUri } = response.data;
 
       let callbackUrl: string | null = null;

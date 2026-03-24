@@ -15,6 +15,19 @@ const {
 
 const router = express.Router();
 
+const isAllowedMobileRedirectUri = (uri) => {
+  if (!uri || typeof uri !== "string") {
+    return false;
+  }
+
+  return (
+    uri.startsWith("skillvista://") ||
+    uri.startsWith("exp://") ||
+    uri.startsWith("exps://") ||
+    uri.startsWith("https://auth.expo.io/")
+  );
+};
+
 // Register endpoint
 router.post("/register", async (req, res) => {
   try {
@@ -166,20 +179,33 @@ router.post("/logout", auth, (req, res) => {
   res.json({ message: "Logged out successfully" });
 });
 
-router.get("/github/url", auth, (_req, res) => {
+router.get("/github/url", auth, (req, res) => {
   if (!hasGitHubConfig()) {
     return res.status(500).json({
       error: "GitHub OAuth is not configured on the server"
     });
   }
 
+  const requestedMobileRedirect =
+    typeof req.query.mobileRedirectUri === "string" ? req.query.mobileRedirectUri : null;
+
+  const mobileRedirectUri = isAllowedMobileRedirectUri(requestedMobileRedirect)
+    ? requestedMobileRedirect
+    : MOBILE_REDIRECT_URI;
+
+  const encodedState = Buffer.from(
+    JSON.stringify({ mobileRedirectUri }),
+    "utf8"
+  ).toString("base64url");
+
   const scope = "read:user user:email repo read:org";
   const authUrl =
     `https://github.com/login/oauth/authorize?client_id=${encodeURIComponent(GITHUB_CLIENT_ID)}` +
     `&redirect_uri=${encodeURIComponent(GITHUB_REDIRECT_URI)}` +
-    `&scope=${encodeURIComponent(scope)}`;
+    `&scope=${encodeURIComponent(scope)}` +
+    `&state=${encodeURIComponent(encodedState)}`;
 
-  return res.json({ authUrl, redirectUri: MOBILE_REDIRECT_URI });
+  return res.json({ authUrl, redirectUri: mobileRedirectUri });
 });
 
 router.get("/github/mobile-callback", (req, res) => {
@@ -199,10 +225,24 @@ router.get("/github/mobile-callback", (req, res) => {
     params.set("error_description", errorDescription);
   }
 
+  let mobileRedirectUri = MOBILE_REDIRECT_URI;
+  const state = typeof req.query.state === "string" ? req.query.state : null;
+
+  if (state) {
+    try {
+      const parsedState = JSON.parse(Buffer.from(state, "base64url").toString("utf8"));
+      if (isAllowedMobileRedirectUri(parsedState?.mobileRedirectUri)) {
+        mobileRedirectUri = parsedState.mobileRedirectUri;
+      }
+    } catch (error) {
+      console.warn("Invalid OAuth state for mobile redirect", error.message);
+    }
+  }
+
   const queryString = params.toString();
   const redirectTarget = queryString
-    ? `${MOBILE_REDIRECT_URI}?${queryString}`
-    : MOBILE_REDIRECT_URI;
+    ? `${mobileRedirectUri}?${queryString}`
+    : mobileRedirectUri;
 
   return res.redirect(302, redirectTarget);
 });
