@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import * as SecureStore from "expo-secure-store";
-import axios from "axios";
 import * as Linking from "expo-linking";
 import * as WebBrowser from "expo-web-browser";
 import api from "../utils/api";
@@ -38,8 +37,18 @@ interface AuthProviderProps {
   children: ReactNode;
 }
 
-const API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_URL || "http://localhost:5000/api";
+const getReadableAuthError = (error: any, fallback: string) => {
+  if (error?.response?.data?.error) {
+    return error.response.data.error;
+  }
+
+  // Axios network errors have no response object.
+  if (error?.code === "ECONNABORTED" || error?.message === "Network Error") {
+    return "Cannot reach backend API. Start backend and set EXPO_PUBLIC_API_URL to your LAN URL (example: http://192.168.1.10:5000/api).";
+  }
+
+  return fallback;
+};
 
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
@@ -94,7 +103,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     confirmPassword: string
   ) => {
     try {
-      const response = await axios.post(`${API_BASE_URL}/auth/register`, {
+      const response = await api.post("/auth/register", {
         name,
         email,
         password,
@@ -106,14 +115,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       setToken(newToken);
       setUser(userData);
     } catch (error: any) {
-      const errorMessage = error.response?.data?.error || "Registration failed";
+      const errorMessage = getReadableAuthError(error, "Registration failed");
       throw new Error(errorMessage);
     }
   };
 
   const login = async (email: string, password: string) => {
     try {
-      const response = await axios.post(`${API_BASE_URL}/auth/login`, {
+      const response = await api.post("/auth/login", {
         email,
         password
       });
@@ -123,7 +132,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       setToken(newToken);
       setUser(userData);
     } catch (error: any) {
-      const errorMessage = error.response?.data?.error || "Login failed";
+      const errorMessage = getReadableAuthError(error, "Login failed");
       throw new Error(errorMessage);
     }
   };
@@ -131,8 +140,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const logout = async () => {
     try {
       if (token) {
-        await axios.post(
-          `${API_BASE_URL}/auth/logout`,
+        await api.post(
+          "/auth/logout",
           {},
           {
             headers: { Authorization: `Bearer ${token}` }

@@ -1,8 +1,15 @@
 import axios, { AxiosInstance } from "axios";
 import * as SecureStore from "expo-secure-store";
+import Constants from "expo-constants";
 
 const API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_URL || "http://localhost:5000/api";
+  process.env.EXPO_PUBLIC_API_URL ||
+  Constants.expoConfig?.extra?.apiUrl ||
+  "https://skillvista-if50.onrender.com/api";
+
+if (!process.env.EXPO_PUBLIC_API_URL && !Constants.expoConfig?.extra?.apiUrl) {
+  console.warn("EXPO_PUBLIC_API_URL is not set. Falling back to deployed Render API.");
+}
 
 const api: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,

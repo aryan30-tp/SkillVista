@@ -35,6 +35,9 @@
         }
       ],
       "expo-secure-store"
-    ]
+    ],
+    "extra": {
+      "apiUrl": "https://skillvista-fl50.onrender.com"
+    }
   }
 }
