@@ -8,9 +8,11 @@ import {
   Alert,
   ActivityIndicator
 } from "react-native";
+import { useRouter } from "expo-router";
 import { useAuth } from "../../context/AuthContext";
 
 export default function RegisterScreen() {
+  const router = useRouter();
   const { register, loading } = useAuth();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -43,7 +45,7 @@ export default function RegisterScreen() {
     try {
       setLocalLoading(true);
       await register(name, email, password, confirmPassword);
-      Alert.alert("Success", "Registration successful!");
+      router.replace("/dashboard");
     } catch (error: any) {
       Alert.alert("Registration Failed", error.message);
     } finally {

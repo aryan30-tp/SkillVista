@@ -8,9 +8,11 @@ import {
   Alert,
   ActivityIndicator
 } from "react-native";
+import { useRouter } from "expo-router";
 import { useAuth } from "../../context/AuthContext";
 
 export default function LoginScreen() {
+  const router = useRouter();
   const { login, loading } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -31,7 +33,7 @@ export default function LoginScreen() {
     try {
       setLocalLoading(true);
       await login(email, password);
-      Alert.alert("Success", "Logged in successfully!");
+      router.replace("/dashboard");
     } catch (error: any) {
       Alert.alert("Login Failed", error.message);
     } finally {

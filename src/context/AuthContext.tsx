@@ -50,6 +50,44 @@ const getReadableAuthError = (error: any, fallback: string) => {
   return fallback;
 };
 
+const OAUTH_REDIRECT_TIMEOUT_MS = 3 * 60 * 1000;
+
+const extractCodeFromCallbackUrl = (callbackUrl: string) => {
+  const parsed = Linking.parse(callbackUrl);
+  const code = typeof parsed.queryParams?.code === "string" ? parsed.queryParams.code : null;
+  const oauthError =
+    typeof parsed.queryParams?.error === "string" ? parsed.queryParams.error : null;
+
+  if (oauthError) {
+    throw new Error(`GitHub OAuth failed: ${oauthError}`);
+  }
+
+  if (!code) {
+    throw new Error("GitHub authorization code not found");
+  }
+
+  return code;
+};
+
+const waitForOAuthRedirect = (redirectUri: string, timeoutMs = OAUTH_REDIRECT_TIMEOUT_MS) => {
+  return new Promise<string>((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      subscription.remove();
+      reject(new Error("GitHub authorization timed out. Please try again."));
+    }, timeoutMs);
+
+    const subscription = Linking.addEventListener("url", ({ url }) => {
+      if (!url || !url.startsWith(redirectUri)) {
+        return;
+      }
+
+      clearTimeout(timeoutId);
+      subscription.remove();
+      resolve(url);
+    });
+  });
+};
+
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
@@ -162,24 +200,19 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       const response = await api.get("/auth/github/url");
       const { authUrl, redirectUri } = response.data;
 
-      const result = await WebBrowser.openAuthSessionAsync(authUrl, redirectUri);
+      let callbackUrl: string | null = null;
 
-      if (result.type !== "success" || !result.url) {
-        throw new Error("GitHub authorization was cancelled");
+      const authSessionResult = await WebBrowser.openAuthSessionAsync(authUrl, redirectUri);
+      if (authSessionResult.type === "success" && authSessionResult.url) {
+        callbackUrl = authSessionResult.url;
+      } else {
+        // Fallback keeps OAuth usable when Android cancels auth session during 2FA app switching.
+        const redirectPromise = waitForOAuthRedirect(redirectUri);
+        await WebBrowser.openBrowserAsync(authUrl);
+        callbackUrl = await redirectPromise;
       }
 
-      const parsed = Linking.parse(result.url);
-      const code = typeof parsed.queryParams?.code === "string" ? parsed.queryParams.code : null;
-      const oauthError =
-        typeof parsed.queryParams?.error === "string" ? parsed.queryParams.error : null;
-
-      if (oauthError) {
-        throw new Error(`GitHub OAuth failed: ${oauthError}`);
-      }
-
-      if (!code) {
-        throw new Error("GitHub authorization code not found");
-      }
+      const code = extractCodeFromCallbackUrl(callbackUrl);
 
       const callbackResponse = await api.post("/auth/github/callback", { code });
       setUser(callbackResponse.data.user);

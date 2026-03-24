@@ -9,6 +9,7 @@ const {
   GITHUB_CLIENT_ID,
   GITHUB_CLIENT_SECRET,
   GITHUB_REDIRECT_URI,
+  MOBILE_REDIRECT_URI,
   hasGitHubConfig
 } = require("../config/github");
 
@@ -178,7 +179,32 @@ router.get("/github/url", auth, (_req, res) => {
     `&redirect_uri=${encodeURIComponent(GITHUB_REDIRECT_URI)}` +
     `&scope=${encodeURIComponent(scope)}`;
 
-  return res.json({ authUrl, redirectUri: GITHUB_REDIRECT_URI });
+  return res.json({ authUrl, redirectUri: MOBILE_REDIRECT_URI });
+});
+
+router.get("/github/mobile-callback", (req, res) => {
+  const params = new URLSearchParams();
+  const code = typeof req.query.code === "string" ? req.query.code : null;
+  const error = typeof req.query.error === "string" ? req.query.error : null;
+  const errorDescription =
+    typeof req.query.error_description === "string" ? req.query.error_description : null;
+
+  if (code) {
+    params.set("code", code);
+  }
+  if (error) {
+    params.set("error", error);
+  }
+  if (errorDescription) {
+    params.set("error_description", errorDescription);
+  }
+
+  const queryString = params.toString();
+  const redirectTarget = queryString
+    ? `${MOBILE_REDIRECT_URI}?${queryString}`
+    : MOBILE_REDIRECT_URI;
+
+  return res.redirect(302, redirectTarget);
 });
 
 router.post("/github/callback", auth, async (req, res) => {
