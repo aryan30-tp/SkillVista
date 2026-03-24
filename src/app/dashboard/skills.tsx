@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
   TouchableOpacity,
   Alert
 } from "react-native";
+import { useFocusEffect } from "@react-navigation/native";
 import api from "../../utils/api";
 
 interface Skill {
@@ -56,6 +57,12 @@ export default function SkillsScreen() {
     fetchSkills();
     fetchSkillOptions();
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchSkills();
+    }, [])
+  );
 
   const fetchSkills = async () => {
     try {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   ScrollView,
   Alert
 } from "react-native";
+import { useFocusEffect } from "@react-navigation/native";
 import api from "../../utils/api";
 
 interface SkillNode {
@@ -24,6 +25,12 @@ export default function KnowledgeMapScreen() {
   useEffect(() => {
     fetchSkillsForMap();
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchSkillsForMap();
+    }, [])
+  );
 
   const fetchSkillsForMap = async () => {
     try {
