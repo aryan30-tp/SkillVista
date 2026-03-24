@@ -22,16 +22,13 @@ const userSchema = new mongoose.Schema(
     githubId: {
       type: String,
       unique: true,
-      sparse: true,
-      default: null
+      sparse: true
     },
     githubAccessToken: {
-      type: String,
-      default: null
+      type: String
     },
     githubUsername: {
-      type: String,
-      default: null
+      type: String
     },
     skills: [
       {

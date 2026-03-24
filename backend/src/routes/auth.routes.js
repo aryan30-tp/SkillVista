@@ -74,6 +74,12 @@ router.post("/register", async (req, res) => {
     });
   } catch (error) {
     console.error("Register error:", error);
+    if (error?.code === 11000) {
+      const duplicateField = Object.keys(error?.keyPattern || {})[0] || "field";
+      return res.status(409).json({
+        error: `Duplicate value for ${duplicateField}. Please try again with different credentials.`
+      });
+    }
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -248,9 +254,9 @@ router.post("/github/disconnect", auth, async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
 
-    user.githubAccessToken = null;
-    user.githubId = null;
-    user.githubUsername = null;
+    user.githubAccessToken = undefined;
+    user.githubId = undefined;
+    user.githubUsername = undefined;
     user.skillExtractionStatus = "pending";
     user.repositoryCount = 0;
     user.lastSkillSync = null;
