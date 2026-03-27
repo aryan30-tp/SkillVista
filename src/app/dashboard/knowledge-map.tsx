@@ -35,13 +35,15 @@ interface CameraState {
 const CAMERA_DEFAULT: CameraState = {
   rotationX: -0.2,
   rotationY: 0.35,
-  zoom: 3.25 // Set initial zoom for largest graph size
+  zoom: 2.0 // Reduced initial zoom for a more zoomed-out view
 };
 
 const EDGE_MIN_ALPHA = 0.15;
 const EDGE_MAX_ALPHA = 0.55;
 
 export default function KnowledgeMapScreen() {
+
+  // All state and ref declarations first
   const [search, setSearch] = useState("");
   const [searchResults, setSearchResults] = useState<SkillGraphNode[]>([]);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -54,6 +56,17 @@ export default function KnowledgeMapScreen() {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [localSelectedNode, setLocalSelectedNode] = useState<SkillGraphNode | null>(null);
   const [camera, setCamera] = useState<CameraState>(CAMERA_DEFAULT);
+
+  // Compute focus set for opacity logic (must come after state declarations)
+  const focusNodeIds = useMemo(() => {
+    if (!localSelectedNode) return null;
+    const related = new Set([localSelectedNode.id]);
+    edges.forEach((edge) => {
+      if (edge.source === localSelectedNode.id) related.add(edge.target);
+      if (edge.target === localSelectedNode.id) related.add(edge.source);
+    });
+    return related;
+  }, [localSelectedNode, edges]);
 
   // Search logic
   useEffect(() => {
@@ -236,8 +249,9 @@ export default function KnowledgeMapScreen() {
               return;
             }
 
+
             const delta = distance / Math.max(initialTouchDistanceRef.current, 1);
-            const nextZoom = Math.max(0.6, Math.min(2.1, initialZoomRef.current * delta));
+            const nextZoom = Math.max(0.6, Math.min(4.0, initialZoomRef.current * delta));
 
             setCamera((prev) => ({
               ...prev,
@@ -332,10 +346,21 @@ export default function KnowledgeMapScreen() {
       <View style={styles.mapFrame} {...panResponder.panHandlers}>
         <View style={styles.graphPlaneCentered}>
           {visibleEdges.map(({ edge, length, angle, centerX, centerY }) => {
-            const alpha = Math.max(
+            // Opacity logic for edges
+            let edgeOpacity = Math.max(
               EDGE_MIN_ALPHA,
               Math.min(EDGE_MAX_ALPHA, EDGE_MIN_ALPHA + edge.weight * EDGE_MAX_ALPHA)
             );
+            if (focusNodeIds) {
+              // Only keep edges fully visible if both ends are in focus set
+              if (focusNodeIds.has(edge.source) && focusNodeIds.has(edge.target)) {
+                edgeOpacity = 1;
+              } else {
+                edgeOpacity = 0.15;
+              }
+            } else {
+              edgeOpacity = 1;
+            }
             return (
               <View
                 key={edge.id}
@@ -345,7 +370,7 @@ export default function KnowledgeMapScreen() {
                     width: Math.max(1, length),
                     left: centerX - length / 2,
                     top: centerY,
-                    opacity: alpha,
+                    opacity: edgeOpacity,
                     backgroundColor: "#7A7A7A",
                     transform: [{ rotateZ: `${angle}rad` }]
                   }
@@ -355,6 +380,13 @@ export default function KnowledgeMapScreen() {
           })}
           {projectedNodes.map(({ node, screenX, screenY, radius }) => {
             const isSelected = localSelectedNode && localSelectedNode.id === node.id;
+            // Opacity logic for nodes
+            let nodeOpacity = 1;
+            if (focusNodeIds) {
+              nodeOpacity = focusNodeIds.has(node.id) ? 1 : 0.15;
+            } else {
+              nodeOpacity = 1;
+            }
             return (
               <Pressable
                 key={node.id}
@@ -369,7 +401,8 @@ export default function KnowledgeMapScreen() {
                     top: screenY - radius,
                     backgroundColor: node.color,
                     borderWidth: isSelected ? 2 : 0,
-                    borderColor: "#102A43"
+                    borderColor: "#102A43",
+                    opacity: nodeOpacity
                   }
                 ]}
               >
@@ -408,7 +441,15 @@ export default function KnowledgeMapScreen() {
                 <Text style={styles.drawerSubtitle}>{localSelectedNode.category}</Text>
               </View>
               <Pressable onPress={() => setSelectedNodeId(null)}>
-                <Text style={styles.drawerClose}>Close</Text>
+                <Text
+                  style={styles.drawerClose}
+                  onPress={() => {
+                    setSelectedNodeId(null);
+                    setLocalSelectedNode(null);
+                  }}
+                >
+                  Close
+                </Text>
               </Pressable>
             </View>
             <View style={styles.drawerMetrics}>
