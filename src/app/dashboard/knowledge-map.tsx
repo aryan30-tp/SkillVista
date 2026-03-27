@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import api from "../../utils/api";
+import SkillGraph3DView from "../../components/SkillGraph3DView";
 import {
   buildGraphLayout,
   projectPoint,
@@ -46,6 +47,7 @@ export default function KnowledgeMapScreen() {
   const [clusterMode, setClusterMode] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [camera, setCamera] = useState<CameraState>(CAMERA_DEFAULT);
+  const [show3D, setShow3D] = useState(false);
 
   const initialTouchDistanceRef = useRef<number | null>(null);
   const initialZoomRef = useRef<number>(CAMERA_DEFAULT.zoom);
@@ -287,6 +289,14 @@ export default function KnowledgeMapScreen() {
 
       <View style={styles.toolbarRow}>
         <Pressable
+          onPress={() => setShow3D((prev) => !prev)}
+          style={[styles.toolbarButton, show3D && styles.toolbarButtonActive]}
+        >
+          <Text style={[styles.toolbarText, show3D && styles.toolbarTextActive]}>
+            {show3D ? "2D Mode" : "3D Mode"}
+          </Text>
+        </Pressable>
+        <Pressable
           onPress={() => setClusterMode((prev) => !prev)}
           style={[styles.toolbarButton, clusterMode && styles.toolbarButtonActive]}
         >
@@ -294,71 +304,81 @@ export default function KnowledgeMapScreen() {
             Cluster View
           </Text>
         </Pressable>
-
         <Pressable onPress={resetCamera} style={styles.toolbarButton}>
           <Text style={styles.toolbarText}>Reset Camera</Text>
         </Pressable>
       </View>
 
-      <View style={styles.mapFrame} {...panResponder.panHandlers}>
-        <View style={styles.graphPlane}>
-          {visibleEdges.map(({ edge, length, angle, centerX, centerY }) => {
-            const alpha = Math.max(
-              EDGE_MIN_ALPHA,
-              Math.min(EDGE_MAX_ALPHA, EDGE_MIN_ALPHA + edge.weight * EDGE_MAX_ALPHA)
-            );
+      {show3D ? (
+        <SkillGraph3DView
+          nodes={nodes}
+          edges={edges}
+          clusterMode={clusterMode}
+          cameraState={camera}
+          onNodeSelect={setSelectedNodeId}
+          selectedNodeId={selectedNodeId}
+        />
+      ) : (
+        <View style={styles.mapFrame} {...panResponder.panHandlers}>
+          <View style={styles.graphPlane}>
+            {visibleEdges.map(({ edge, length, angle, centerX, centerY }) => {
+              const alpha = Math.max(
+                EDGE_MIN_ALPHA,
+                Math.min(EDGE_MAX_ALPHA, EDGE_MIN_ALPHA + edge.weight * EDGE_MAX_ALPHA)
+              );
 
-            return (
-              <View
-                key={edge.id}
-                style={[
-                  styles.edge,
-                  {
-                    width: Math.max(1, length),
-                    left: centerX - length / 2,
-                    top: centerY,
-                    opacity: alpha,
-                    backgroundColor: "#7A7A7A",
-                    transform: [{ rotateZ: `${angle}rad` }]
-                  }
-                ]}
-              />
-            );
-          })}
+              return (
+                <View
+                  key={edge.id}
+                  style={[
+                    styles.edge,
+                    {
+                      width: Math.max(1, length),
+                      left: centerX - length / 2,
+                      top: centerY,
+                      opacity: alpha,
+                      backgroundColor: "#7A7A7A",
+                      transform: [{ rotateZ: `${angle}rad` }]
+                    }
+                  ]}
+                />
+              );
+            })}
 
-          {projectedNodes.map(({ node, screenX, screenY, radius }) => {
-            const isSelected = selectedNodeId === node.id;
+            {projectedNodes.map(({ node, screenX, screenY, radius }) => {
+              const isSelected = selectedNodeId === node.id;
 
-            return (
-              <Pressable
-                key={node.id}
-                onPress={() => setSelectedNodeId(node.id)}
-                style={[
-                  styles.node,
-                  {
-                    width: radius * 2,
-                    height: radius * 2,
-                    borderRadius: radius,
-                    left: screenX - radius,
-                    top: screenY - radius,
-                    backgroundColor: node.color,
-                    borderWidth: isSelected ? 2 : 0,
-                    borderColor: "#102A43"
-                  }
-                ]}
-              >
-                <Text numberOfLines={1} style={styles.nodeLabel}>
-                  {node.name}
-                </Text>
-              </Pressable>
-            );
-          })}
+              return (
+                <Pressable
+                  key={node.id}
+                  onPress={() => setSelectedNodeId(node.id)}
+                  style={[
+                    styles.node,
+                    {
+                      width: radius * 2,
+                      height: radius * 2,
+                      borderRadius: radius,
+                      left: screenX - radius,
+                      top: screenY - radius,
+                      backgroundColor: node.color,
+                      borderWidth: isSelected ? 2 : 0,
+                      borderColor: "#102A43"
+                    }
+                  ]}
+                >
+                  <Text numberOfLines={1} style={styles.nodeLabel}>
+                    {node.name}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <View style={styles.mapHintBar}>
+            <Text style={styles.mapHintText}>Drag to orbit • Pinch to zoom • Tap node for details</Text>
+          </View>
         </View>
-
-        <View style={styles.mapHintBar}>
-          <Text style={styles.mapHintText}>Drag to orbit • Pinch to zoom • Tap node for details</Text>
-        </View>
-      </View>
+      )}
 
       <View style={styles.statsRow}>
         <View style={styles.statCard}>
