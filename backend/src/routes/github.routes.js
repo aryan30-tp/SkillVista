@@ -92,6 +92,136 @@ const mapWithConcurrency = async (items, concurrency, mapper) => {
   return results;
 };
 
+const CATEGORY_COLORS = {
+  frontend: "#2A9D8F",
+  backend: "#264653",
+  database: "#E9C46A",
+  devops: "#F4A261",
+  language: "#457B9D",
+  mobile: "#00A896",
+  "app-development": "#3A86FF",
+  "ai-ml": "#FB8500",
+  "data-science": "#90BE6D",
+  cybersecurity: "#E63946",
+  tool: "#6D6875",
+  other: "#8D99AE"
+};
+
+const buildEdgeKey = (a, b) => {
+  return a < b ? `${a}::${b}` : `${b}::${a}`;
+};
+
+const buildSkillGraphPayload = (skillList, user) => {
+  const repoToSkillsMap = new Map();
+  const nodeMeta = new Map();
+
+  const nodes = skillList
+    .map((entry) => {
+      const id = String(entry._id);
+      const repos = Array.isArray(entry.detectedInRepos) ? entry.detectedInRepos : [];
+      const normalizedRepos = repos
+        .filter((repo) => typeof repo === "string" && repo.trim() && repo !== "manual")
+        .map((repo) => repo.trim());
+
+      nodeMeta.set(id, {
+        confidenceScore: Number(entry.confidenceScore || 0),
+        repoSet: new Set(normalizedRepos)
+      });
+
+      for (const repoName of normalizedRepos) {
+        if (!repoToSkillsMap.has(repoName)) {
+          repoToSkillsMap.set(repoName, new Set());
+        }
+        repoToSkillsMap.get(repoName).add(id);
+      }
+
+      return {
+        id,
+        type: "skill",
+        name: entry.name,
+        category: entry.category,
+        confidenceScore: Number(entry.confidenceScore || 0),
+        repoCount: normalizedRepos.length,
+        color: CATEGORY_COLORS[entry.category] || CATEGORY_COLORS.other
+      };
+    })
+    .sort((a, b) => b.confidenceScore - a.confidenceScore);
+
+  const pairCountMap = new Map();
+
+  for (const skillIdSet of repoToSkillsMap.values()) {
+    const skillIds = Array.from(skillIdSet);
+
+    for (let i = 0; i < skillIds.length; i += 1) {
+      for (let j = i + 1; j < skillIds.length; j += 1) {
+        const key = buildEdgeKey(skillIds[i], skillIds[j]);
+        pairCountMap.set(key, (pairCountMap.get(key) || 0) + 1);
+      }
+    }
+  }
+
+  const edges = Array.from(pairCountMap.entries())
+    .map(([pairKey, overlapCount]) => {
+      const [source, target] = pairKey.split("::");
+      const sourceMeta = nodeMeta.get(source);
+      const targetMeta = nodeMeta.get(target);
+      if (!sourceMeta || !targetMeta) {
+        return null;
+      }
+
+      const sourceRepoCount = sourceMeta.repoSet.size;
+      const targetRepoCount = targetMeta.repoSet.size;
+      const union = sourceRepoCount + targetRepoCount - overlapCount;
+      const jaccard = union > 0 ? overlapCount / union : 0;
+      const confidenceBlend = (sourceMeta.confidenceScore + targetMeta.confidenceScore) / 2;
+
+      // Blend structural overlap and detection confidence into one stable edge weight.
+      const weight = Number(Math.min(1, jaccard * 0.7 + confidenceBlend * 0.3).toFixed(3));
+
+      return {
+        id: `edge-${source}-${target}`,
+        source,
+        target,
+        overlapCount,
+        weight
+      };
+    })
+    .filter((edge) => edge && edge.weight >= 0.2)
+    .sort((a, b) => b.weight - a.weight);
+
+  const categoryStats = new Map();
+  for (const node of nodes) {
+    const existing = categoryStats.get(node.category) || {
+      count: 0,
+      confidenceTotal: 0
+    };
+    existing.count += 1;
+    existing.confidenceTotal += node.confidenceScore;
+    categoryStats.set(node.category, existing);
+  }
+
+  const clusters = Array.from(categoryStats.entries())
+    .map(([category, stats]) => ({
+      category,
+      nodeCount: stats.count,
+      averageConfidence: Number((stats.confidenceTotal / Math.max(1, stats.count)).toFixed(3)),
+      color: CATEGORY_COLORS[category] || CATEGORY_COLORS.other
+    }))
+    .sort((a, b) => b.nodeCount - a.nodeCount);
+
+  return {
+    nodes,
+    edges,
+    metadata: {
+      totalNodes: nodes.length,
+      totalEdges: edges.length,
+      repositoryCount: Number(user.repositoryCount || 0),
+      lastSyncedAt: user.lastSkillSync || null,
+      clusters
+    }
+  };
+};
+
 const buildSkillOptions = () => {
   const optionsMap = new Map();
 
@@ -584,6 +714,31 @@ router.get("/skills", auth, async (req, res) => {
   } catch (error) {
     console.error("Get skills error:", error.message);
     res.status(500).json({ error: "Failed to fetch skills" });
+  }
+});
+
+router.get("/skill-graph", auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.userId).populate("skills.skillId");
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const skillList = user.skills
+      .filter((entry) => entry.skillId)
+      .map((entry) => ({
+        _id: entry.skillId._id,
+        name: entry.skillId.name,
+        category: entry.skillId.category,
+        confidenceScore: entry.confidenceScore,
+        detectedInRepos: entry.detectedInRepos || []
+      }));
+
+    const payload = buildSkillGraphPayload(skillList, user);
+    return res.json(payload);
+  } catch (error) {
+    console.error("Get skill graph error:", error.message);
+    return res.status(500).json({ error: "Failed to build skill graph" });
   }
 });
 
