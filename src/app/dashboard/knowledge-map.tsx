@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { TextInput, FlatList, TouchableOpacity } from "react-native";
 import { Animated } from "react-native";
 import {
   ActivityIndicator,
@@ -34,13 +35,15 @@ interface CameraState {
 const CAMERA_DEFAULT: CameraState = {
   rotationX: -0.2,
   rotationY: 0.35,
-  zoom: 1
+  zoom: 3.25 // Set initial zoom for largest graph size
 };
 
 const EDGE_MIN_ALPHA = 0.15;
 const EDGE_MAX_ALPHA = 0.55;
 
 export default function KnowledgeMapScreen() {
+  const [search, setSearch] = useState("");
+  const [searchResults, setSearchResults] = useState<SkillGraphNode[]>([]);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const drawerAnim = useRef(new Animated.Value(0)).current;
   const [nodes, setNodes] = useState<SkillGraphNode[]>([]);
@@ -52,10 +55,24 @@ export default function KnowledgeMapScreen() {
   const [localSelectedNode, setLocalSelectedNode] = useState<SkillGraphNode | null>(null);
   const [camera, setCamera] = useState<CameraState>(CAMERA_DEFAULT);
 
+  // Search logic
+  useEffect(() => {
+    if (search.trim().length === 0) {
+      setSearchResults([]);
+      return;
+    }
+    const lower = search.trim().toLowerCase();
+    setSearchResults(
+      nodes.filter((n) => n.name.toLowerCase().includes(lower))
+        .slice(0, 8)
+    );
+  }, [search, nodes]);
+
   const initialTouchDistanceRef = useRef<number | null>(null);
   const initialZoomRef = useRef<number>(CAMERA_DEFAULT.zoom);
   const panDeltaRef = useRef({ dx: 0, dy: 0 });
 
+  // Decouple node selection from data reload
   const fetchGraph = useCallback(async () => {
     try {
       setLoading(true);
@@ -65,16 +82,14 @@ export default function KnowledgeMapScreen() {
       setNodes(payload.nodes || []);
       setEdges(payload.edges || []);
       setClusters(payload.metadata?.clusters || []);
-      if (selectedNodeId && !(payload.nodes || []).some((node) => node.id === selectedNodeId)) {
-        setSelectedNodeId(null);
-      }
+      // Do not reset selectedNodeId on data reload
     } catch (error) {
       console.error("Error fetching skill graph:", error);
       Alert.alert("Error", "Failed to load your knowledge graph.");
     } finally {
       setLoading(false);
     }
-  }, [selectedNodeId]);
+  }, []);
 
   useEffect(() => {
     fetchGraph();
@@ -282,8 +297,40 @@ export default function KnowledgeMapScreen() {
 
   return (
     <View style={styles.container}>
+      {/* Search Bar */}
+      <View style={styles.searchBarWrap}>
+        <TextInput
+          style={styles.searchBar}
+          placeholder="Search skill..."
+          placeholderTextColor="#7B6F4B"
+          value={search}
+          onChangeText={setSearch}
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+        {searchResults.length > 0 && (
+          <View style={styles.searchResultsBox}>
+            <FlatList
+              data={searchResults}
+              keyExtractor={(item) => item.id}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={styles.searchResultItem}
+                  onPress={() => {
+                    setSelectedNodeId(item.id);
+                    setSearch("");
+                    setSearchResults([]);
+                  }}
+                >
+                  <Text style={styles.searchResultText}>{item.name}</Text>
+                </TouchableOpacity>
+              )}
+            />
+          </View>
+        )}
+      </View>
       <View style={styles.mapFrame} {...panResponder.panHandlers}>
-        <View style={styles.graphPlane}>
+        <View style={styles.graphPlaneCentered}>
           {visibleEdges.map(({ edge, length, angle, centerX, centerY }) => {
             const alpha = Math.max(
               EDGE_MIN_ALPHA,
@@ -421,6 +468,54 @@ export default function KnowledgeMapScreen() {
 }
 
 const styles = StyleSheet.create({
+  searchBarWrap: {
+    width: '100%',
+    paddingHorizontal: 18,
+    paddingTop: 18,
+    backgroundColor: '#F5F3E7',
+    zIndex: 10
+  },
+  searchBar: {
+    width: '100%',
+    backgroundColor: '#EFE9D7',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 15,
+    color: '#3A3A29',
+    fontWeight: '700',
+    borderWidth: 1,
+    borderColor: '#D6D1B1',
+    marginBottom: 2
+  },
+  searchResultsBox: {
+    position: 'absolute',
+    top: 54,
+    left: 18,
+    right: 18,
+    backgroundColor: '#FFF',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#D6D1B1',
+    shadowColor: '#B5A77A',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    elevation: 4,
+    zIndex: 20,
+    maxHeight: 180
+  },
+  searchResultItem: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderColor: '#F0EAD6'
+  },
+  searchResultText: {
+    color: '#1E4B42',
+    fontWeight: '700',
+    fontSize: 15
+  },
   container: {
     flex: 1,
     backgroundColor: "#E6E4D9", // earthy background
@@ -541,6 +636,17 @@ const styles = StyleSheet.create({
     position: "relative",
     width: "100%",
     height: GRAPH_HEIGHT
+  },
+  graphPlaneCentered: {
+    position: "relative",
+    width: "100%",
+    height: GRAPH_HEIGHT,
+    justifyContent: 'flex-start',
+    alignItems: 'center',
+    display: 'flex',
+    marginTop: 60, // push map further down
+    marginBottom: 0,
+    flex: 0
   },
   edge: {
     position: "absolute",
