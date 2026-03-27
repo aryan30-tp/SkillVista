@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Animated } from "react-native";
 import {
   ActivityIndicator,
   Alert,
@@ -12,7 +13,7 @@ import {
 } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import api from "../../utils/api";
-import SkillGraph3DView from "../../components/SkillGraph3DView";
+// ...existing code...
 import {
   buildGraphLayout,
   projectPoint,
@@ -40,14 +41,16 @@ const EDGE_MIN_ALPHA = 0.15;
 const EDGE_MAX_ALPHA = 0.55;
 
 export default function KnowledgeMapScreen() {
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const drawerAnim = useRef(new Animated.Value(0)).current;
   const [nodes, setNodes] = useState<SkillGraphNode[]>([]);
   const [edges, setEdges] = useState<SkillGraphEdge[]>([]);
   const [clusters, setClusters] = useState<SkillGraphPayload["metadata"]["clusters"]>([]);
   const [loading, setLoading] = useState(true);
   const [clusterMode, setClusterMode] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [localSelectedNode, setLocalSelectedNode] = useState<SkillGraphNode | null>(null);
   const [camera, setCamera] = useState<CameraState>(CAMERA_DEFAULT);
-  const [show3D, setShow3D] = useState(false);
 
   const initialTouchDistanceRef = useRef<number | null>(null);
   const initialZoomRef = useRef<number>(CAMERA_DEFAULT.zoom);
@@ -153,22 +156,26 @@ export default function KnowledgeMapScreen() {
       .sort((a, b) => a.depth - b.depth);
   }, [edges, projectedNodeMap]);
 
-  const selectedNode = useMemo(() => {
-    if (!selectedNodeId) {
-      return null;
+  // Use local state for selected node for smoother transitions
+  useEffect(() => {
+    if (selectedNodeId) {
+      setLocalSelectedNode(nodes.find((node) => node.id === selectedNodeId) || null);
+      setDrawerOpen(true);
+      Animated.spring(drawerAnim, { toValue: 1, useNativeDriver: true }).start();
+    } else {
+      Animated.spring(drawerAnim, { toValue: 0, useNativeDriver: true }).start(() => setDrawerOpen(false));
     }
-    return nodes.find((node) => node.id === selectedNodeId) || null;
-  }, [nodes, selectedNodeId]);
+  }, [selectedNodeId, nodes]);
 
   const relatedSkills = useMemo(() => {
-    if (!selectedNode) {
+    if (!localSelectedNode) {
       return [];
     }
 
     return edges
-      .filter((edge) => edge.source === selectedNode.id || edge.target === selectedNode.id)
+      .filter((edge) => edge.source === localSelectedNode.id || edge.target === localSelectedNode.id)
       .map((edge) => {
-        const relatedId = edge.source === selectedNode.id ? edge.target : edge.source;
+        const relatedId = edge.source === localSelectedNode.id ? edge.target : edge.source;
         const relatedNode = nodes.find((node) => node.id === relatedId);
         if (!relatedNode) {
           return null;
@@ -184,7 +191,7 @@ export default function KnowledgeMapScreen() {
       .filter((item): item is NonNullable<typeof item> => Boolean(item))
       .sort((a, b) => b.weight - a.weight)
       .slice(0, 5);
-  }, [selectedNode, edges, nodes]);
+  }, [localSelectedNode, edges, nodes]);
 
   const panResponder = useMemo(
     () =>
@@ -274,187 +281,153 @@ export default function KnowledgeMapScreen() {
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
-      <View style={styles.headerRow}>
-        <View>
-          <Text style={styles.title}>3D Knowledge Graph</Text>
-          <Text style={styles.subtitle}>
-            {nodes.length} skills • {edges.length} relationships
-          </Text>
+    <View style={styles.container}>
+      <View style={styles.mapFrame} {...panResponder.panHandlers}>
+        <View style={styles.graphPlane}>
+          {visibleEdges.map(({ edge, length, angle, centerX, centerY }) => {
+            const alpha = Math.max(
+              EDGE_MIN_ALPHA,
+              Math.min(EDGE_MAX_ALPHA, EDGE_MIN_ALPHA + edge.weight * EDGE_MAX_ALPHA)
+            );
+            return (
+              <View
+                key={edge.id}
+                style={[
+                  styles.edge,
+                  {
+                    width: Math.max(1, length),
+                    left: centerX - length / 2,
+                    top: centerY,
+                    opacity: alpha,
+                    backgroundColor: "#7A7A7A",
+                    transform: [{ rotateZ: `${angle}rad` }]
+                  }
+                ]}
+              />
+            );
+          })}
+          {projectedNodes.map(({ node, screenX, screenY, radius }) => {
+            const isSelected = localSelectedNode && localSelectedNode.id === node.id;
+            return (
+              <Pressable
+                key={node.id}
+                onPress={() => setSelectedNodeId(node.id)}
+                style={[
+                  styles.node,
+                  {
+                    width: radius * 2,
+                    height: radius * 2,
+                    borderRadius: radius,
+                    left: screenX - radius,
+                    top: screenY - radius,
+                    backgroundColor: node.color,
+                    borderWidth: isSelected ? 2 : 0,
+                    borderColor: "#102A43"
+                  }
+                ]}
+              >
+                <Text numberOfLines={1} style={styles.nodeLabel}>
+                  {node.name}
+                </Text>
+              </Pressable>
+            );
+          })}
         </View>
-        <Pressable style={styles.refreshButton} onPress={fetchGraph}>
-          <Text style={styles.refreshText}>Refresh</Text>
-        </Pressable>
-      </View>
-
-      <View style={styles.toolbarRow}>
-        <Pressable
-          onPress={() => setShow3D((prev) => !prev)}
-          style={[styles.toolbarButton, show3D && styles.toolbarButtonActive]}
-        >
-          <Text style={[styles.toolbarText, show3D && styles.toolbarTextActive]}>
-            {show3D ? "2D Mode" : "3D Mode"}
-          </Text>
-        </Pressable>
-        <Pressable
-          onPress={() => setClusterMode((prev) => !prev)}
-          style={[styles.toolbarButton, clusterMode && styles.toolbarButtonActive]}
-        >
-          <Text style={[styles.toolbarText, clusterMode && styles.toolbarTextActive]}>
-            Cluster View
-          </Text>
-        </Pressable>
-        <Pressable onPress={resetCamera} style={styles.toolbarButton}>
-          <Text style={styles.toolbarText}>Reset Camera</Text>
-        </Pressable>
-      </View>
-
-      {show3D ? (
-        <SkillGraph3DView
-          nodes={nodes}
-          edges={edges}
-          clusterMode={clusterMode}
-          cameraState={camera}
-          onNodeSelect={setSelectedNodeId}
-          selectedNodeId={selectedNodeId}
-        />
-      ) : (
-        <View style={styles.mapFrame} {...panResponder.panHandlers}>
-          <View style={styles.graphPlane}>
-            {visibleEdges.map(({ edge, length, angle, centerX, centerY }) => {
-              const alpha = Math.max(
-                EDGE_MIN_ALPHA,
-                Math.min(EDGE_MAX_ALPHA, EDGE_MIN_ALPHA + edge.weight * EDGE_MAX_ALPHA)
-              );
-
-              return (
-                <View
-                  key={edge.id}
-                  style={[
-                    styles.edge,
-                    {
-                      width: Math.max(1, length),
-                      left: centerX - length / 2,
-                      top: centerY,
-                      opacity: alpha,
-                      backgroundColor: "#7A7A7A",
-                      transform: [{ rotateZ: `${angle}rad` }]
-                    }
-                  ]}
-                />
-              );
-            })}
-
-            {projectedNodes.map(({ node, screenX, screenY, radius }) => {
-              const isSelected = selectedNodeId === node.id;
-
-              return (
-                <Pressable
-                  key={node.id}
-                  onPress={() => setSelectedNodeId(node.id)}
-                  style={[
-                    styles.node,
-                    {
-                      width: radius * 2,
-                      height: radius * 2,
-                      borderRadius: radius,
-                      left: screenX - radius,
-                      top: screenY - radius,
-                      backgroundColor: node.color,
-                      borderWidth: isSelected ? 2 : 0,
-                      borderColor: "#102A43"
-                    }
-                  ]}
-                >
-                  <Text numberOfLines={1} style={styles.nodeLabel}>
-                    {node.name}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-
-          <View style={styles.mapHintBar}>
-            <Text style={styles.mapHintText}>Drag to orbit • Pinch to zoom • Tap node for details</Text>
-          </View>
-        </View>
-      )}
-
-      <View style={styles.statsRow}>
-        <View style={styles.statCard}>
-          <Text style={styles.statValue}>{nodes.length}</Text>
-          <Text style={styles.statLabel}>Skills</Text>
-        </View>
-        <View style={styles.statCard}>
-          <Text style={styles.statValue}>{edges.length}</Text>
-          <Text style={styles.statLabel}>Edges</Text>
-        </View>
-        <View style={styles.statCard}>
-          <Text style={styles.statValue}>{clusters.length}</Text>
-          <Text style={styles.statLabel}>Clusters</Text>
+        <View style={styles.mapHintBar}>
+          <Text style={styles.mapHintText}>Drag to orbit • Pinch to zoom • Tap node for details</Text>
         </View>
       </View>
-
-      <View style={styles.clusterSection}>
-        <Text style={styles.sectionTitle}>Category Clusters</Text>
-        <View style={styles.clusterWrap}>
-          {clusters.map((cluster) => (
-            <View key={cluster.category} style={[styles.clusterChip, { borderColor: cluster.color }]}> 
-              <View style={[styles.clusterDot, { backgroundColor: cluster.color }]} />
-              <Text style={styles.clusterText}>
-                {cluster.category} ({cluster.nodeCount})
-              </Text>
-            </View>
-          ))}
-        </View>
-      </View>
-
-      {selectedNode ? (
-        <View style={styles.drawer}>
-          <View style={styles.drawerHeader}>
-            <View style={[styles.drawerColor, { backgroundColor: selectedNode.color }]} />
-            <View style={styles.drawerHeaderTextWrap}>
-              <Text style={styles.drawerTitle}>{selectedNode.name}</Text>
-              <Text style={styles.drawerSubtitle}>{selectedNode.category}</Text>
-            </View>
-            <Pressable onPress={() => setSelectedNodeId(null)}>
-              <Text style={styles.drawerClose}>Close</Text>
-            </Pressable>
-          </View>
-
-          <View style={styles.drawerMetrics}>
-            <Text style={styles.drawerMetricLabel}>
-              Confidence: {Math.round(selectedNode.confidenceScore * 100)}%
-            </Text>
-            <Text style={styles.drawerMetricLabel}>Detected In: {selectedNode.repoCount} repos</Text>
-          </View>
-
-          <Text style={styles.drawerSectionTitle}>Top Related Skills</Text>
-          {relatedSkills.length === 0 ? (
-            <Text style={styles.noRelationText}>No strong relationships yet. Sync more repositories.</Text>
-          ) : (
-            relatedSkills.map((related) => (
-              <View key={related.id} style={styles.relatedRow}>
-                <View style={[styles.relatedDot, { backgroundColor: related.color }]} />
-                <Text style={styles.relatedName}>{related.name}</Text>
-                <Text style={styles.relatedWeight}>{Math.round(related.weight * 100)}%</Text>
+      {/* Collapsible Drawer for Stats, Clusters, and Node Details */}
+      <Animated.View
+        style={[
+          styles.drawer,
+          {
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            bottom: 0,
+            transform: [{ translateY: drawerAnim.interpolate({ inputRange: [0, 1], outputRange: [400, 0] }) }],
+            opacity: drawerAnim
+          }
+        ]}
+        pointerEvents={drawerOpen ? 'auto' : 'none'}
+      >
+        {localSelectedNode ? (
+          <>
+            <View style={styles.drawerHeader}>
+              <View style={[styles.drawerColor, { backgroundColor: localSelectedNode.color }]} />
+              <View style={styles.drawerHeaderTextWrap}>
+                <Text style={styles.drawerTitle}>{localSelectedNode.name}</Text>
+                <Text style={styles.drawerSubtitle}>{localSelectedNode.category}</Text>
               </View>
-            ))
-          )}
-        </View>
-      ) : null}
-    </ScrollView>
+              <Pressable onPress={() => setSelectedNodeId(null)}>
+                <Text style={styles.drawerClose}>Close</Text>
+              </Pressable>
+            </View>
+            <View style={styles.drawerMetrics}>
+              <Text style={styles.drawerMetricLabel}>
+                Confidence: {Math.round(localSelectedNode.confidenceScore * 100)}%
+              </Text>
+              <Text style={styles.drawerMetricLabel}>Detected In: {localSelectedNode.repoCount} repos</Text>
+            </View>
+            <Text style={styles.drawerSectionTitle}>Top Related Skills</Text>
+            {relatedSkills.length === 0 ? (
+              <Text style={styles.noRelationText}>No strong relationships yet. Sync more repositories.</Text>
+            ) : (
+              relatedSkills.map((related) => (
+                <View key={related.id} style={styles.relatedRow}>
+                  <View style={[styles.relatedDot, { backgroundColor: related.color }]} />
+                  <Text style={styles.relatedName}>{related.name}</Text>
+                  <Text style={styles.relatedWeight}>{Math.round(related.weight * 100)}%</Text>
+                </View>
+              ))
+            )}
+          </>
+        ) : (
+          <>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={styles.sectionTitle}>Category Clusters</Text>
+              <Pressable onPress={() => setDrawerOpen(false)}><Text style={styles.drawerClose}>Hide</Text></Pressable>
+            </View>
+            <View style={styles.statsRow}>
+              <View style={styles.statCard}>
+                <Text style={styles.statValue}>{nodes.length}</Text>
+                <Text style={styles.statLabel}>Skills</Text>
+              </View>
+              <View style={styles.statCard}>
+                <Text style={styles.statValue}>{edges.length}</Text>
+                <Text style={styles.statLabel}>Edges</Text>
+              </View>
+              <View style={styles.statCard}>
+                <Text style={styles.statValue}>{clusters.length}</Text>
+                <Text style={styles.statLabel}>Clusters</Text>
+              </View>
+            </View>
+            <View style={styles.clusterWrap}>
+              {clusters.map((cluster) => (
+                <View key={cluster.category} style={[styles.clusterChip, { borderColor: cluster.color }]}> 
+                  <View style={[styles.clusterDot, { backgroundColor: cluster.color }]} />
+                  <Text style={styles.clusterText}>
+                    {cluster.category} ({cluster.nodeCount})
+                  </Text>
+                </View>
+              ))}
+            </View>
+          </>
+        )}
+      </Animated.View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#EEF3EF"
-  },
-  contentContainer: {
-    padding: 16,
-    paddingBottom: 28
+    backgroundColor: "#E6E4D9", // earthy background
+    padding: 0,
+    margin: 0,
+    width: '100%',
+    height: '100%'
   },
   centerContainer: {
     flex: 1,
@@ -489,16 +462,27 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 14
+    marginBottom: 14,
+    paddingTop: 24,
+    paddingHorizontal: 18,
+    backgroundColor: "#F5F3E7",
+    borderBottomWidth: 1,
+    borderColor: "#D6D1B1",
+    shadowColor: "#B5A77A",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 2
   },
   title: {
-    fontSize: 24,
-    fontWeight: "800",
-    color: "#1D3C34"
+    fontSize: 26,
+    fontWeight: "900",
+    color: "#3A3A29",
+    letterSpacing: 0.5
   },
   subtitle: {
     marginTop: 2,
-    color: "#45625C",
+    color: "#7B6F4B",
     fontSize: 13,
     fontWeight: "600"
   },
@@ -515,36 +499,42 @@ const styles = StyleSheet.create({
   },
   toolbarRow: {
     flexDirection: "row",
-    gap: 10,
-    marginBottom: 12
+    gap: 12,
+    marginBottom: 16,
+    paddingHorizontal: 18
   },
   toolbarButton: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "#F5F3E7",
     borderWidth: 1,
-    borderColor: "#D2DDD8",
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 8
+    borderColor: "#B5A77A",
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    shadowColor: "#B5A77A",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 2,
+    elevation: 1
   },
   toolbarButtonActive: {
-    backgroundColor: "#CFEDE6",
-    borderColor: "#2A9D8F"
+    backgroundColor: "#E6E4D9",
+    borderColor: "#7B6F4B"
   },
   toolbarText: {
-    color: "#244B43",
-    fontSize: 12,
-    fontWeight: "700"
+    color: "#3A3A29",
+    fontSize: 13,
+    fontWeight: "800"
   },
   toolbarTextActive: {
-    color: "#1B7167"
+    color: "#7B6F4B"
   },
   mapFrame: {
-    width: "100%",
-    height: GRAPH_HEIGHT,
+    flex: 1,
+    width: '100%',
+    height: '100%',
     backgroundColor: "#F6FAF7",
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: "#D8E6E1",
+    borderRadius: 0,
+    borderWidth: 0,
     overflow: "hidden"
   },
   graphPlane: {
@@ -630,11 +620,17 @@ const styles = StyleSheet.create({
   clusterChip: {
     flexDirection: "row",
     alignItems: "center",
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderRadius: 999,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    backgroundColor: "#F7FCF9"
+    paddingVertical: 7,
+    paddingHorizontal: 14,
+    backgroundColor: "#F5F3E7",
+    marginBottom: 6,
+    shadowColor: "#B5A77A",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.07,
+    shadowRadius: 2,
+    elevation: 1
   },
   clusterDot: {
     width: 8,
@@ -649,11 +645,16 @@ const styles = StyleSheet.create({
   },
   drawer: {
     marginTop: 14,
-    padding: 14,
-    borderRadius: 16,
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "#D3E1DD"
+    padding: 18,
+    borderRadius: 20,
+    backgroundColor: "#F5F3E7",
+    borderWidth: 1.5,
+    borderColor: "#B5A77A",
+    shadowColor: "#B5A77A",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.10,
+    shadowRadius: 6,
+    elevation: 3
   },
   drawerHeader: {
     flexDirection: "row",
@@ -705,7 +706,11 @@ const styles = StyleSheet.create({
   relatedRow: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 8
+    marginBottom: 8,
+    backgroundColor: "#E6E4D9",
+    borderRadius: 8,
+    paddingVertical: 4,
+    paddingHorizontal: 8
   },
   relatedDot: {
     width: 9,

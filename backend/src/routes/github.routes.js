@@ -111,6 +111,7 @@ const buildEdgeKey = (a, b) => {
   return a < b ? `${a}::${b}` : `${b}::${a}`;
 };
 
+
 const buildSkillGraphPayload = (skillList, user) => {
   const repoToSkillsMap = new Map();
   const nodeMeta = new Map();
@@ -125,7 +126,10 @@ const buildSkillGraphPayload = (skillList, user) => {
 
       nodeMeta.set(id, {
         confidenceScore: Number(entry.confidenceScore || 0),
-        repoSet: new Set(normalizedRepos)
+        repoSet: new Set(normalizedRepos),
+        name: entry.name,
+        category: entry.category,
+        keywords: (entry.keywords || [entry.name]).map((k) => String(k).toLowerCase())
       });
 
       for (const repoName of normalizedRepos) {
@@ -151,7 +155,6 @@ const buildSkillGraphPayload = (skillList, user) => {
 
   for (const skillIdSet of repoToSkillsMap.values()) {
     const skillIds = Array.from(skillIdSet);
-
     for (let i = 0; i < skillIds.length; i += 1) {
       for (let j = i + 1; j < skillIds.length; j += 1) {
         const key = buildEdgeKey(skillIds[i], skillIds[j]);
@@ -160,7 +163,9 @@ const buildSkillGraphPayload = (skillList, user) => {
     }
   }
 
-  const edges = Array.from(pairCountMap.entries())
+  // Build initial edges from repo co-occurrence
+  let edgeMap = new Map();
+  Array.from(pairCountMap.entries())
     .map(([pairKey, overlapCount]) => {
       const [source, target] = pairKey.split("::");
       const sourceMeta = nodeMeta.get(source);
@@ -168,26 +173,69 @@ const buildSkillGraphPayload = (skillList, user) => {
       if (!sourceMeta || !targetMeta) {
         return null;
       }
-
       const sourceRepoCount = sourceMeta.repoSet.size;
       const targetRepoCount = targetMeta.repoSet.size;
       const union = sourceRepoCount + targetRepoCount - overlapCount;
       const jaccard = union > 0 ? overlapCount / union : 0;
       const confidenceBlend = (sourceMeta.confidenceScore + targetMeta.confidenceScore) / 2;
-
-      // Blend structural overlap and detection confidence into one stable edge weight.
       const weight = Number(Math.min(1, jaccard * 0.7 + confidenceBlend * 0.3).toFixed(3));
+      if (weight >= 0.2) {
+        const edgeId = `edge-${source}-${target}`;
+        edgeMap.set(edgeId, {
+          id: edgeId,
+          source,
+          target,
+          overlapCount,
+          weight
+        });
+      }
+      return null;
+    });
 
-      return {
-        id: `edge-${source}-${target}`,
-        source,
-        target,
-        overlapCount,
-        weight
-      };
-    })
-    .filter((edge) => edge && edge.weight >= 0.2)
-    .sort((a, b) => b.weight - a.weight);
+  // Add edges for manual/added skills using category and keyword matching
+  // Weights: category match = 0.25, keyword match = 0.6, both = 0.85
+  const skillIds = Array.from(nodeMeta.keys());
+  for (let i = 0; i < skillIds.length; i++) {
+    const nodeA = nodeMeta.get(skillIds[i]);
+    for (let j = i + 1; j < skillIds.length; j++) {
+      const nodeB = nodeMeta.get(skillIds[j]);
+      if (!nodeA || !nodeB) continue;
+      if (skillIds[i] === skillIds[j]) continue;
+
+      let matchCategory = nodeA.category === nodeB.category;
+      let keywordsA = new Set(nodeA.keywords || []);
+      let keywordsB = new Set(nodeB.keywords || []);
+      let sharedKeywords = [...keywordsA].filter((k) => keywordsB.has(k));
+      let matchKeyword = sharedKeywords.length > 0;
+
+      let extraWeight = 0;
+      if (matchCategory && matchKeyword) {
+        extraWeight = 0.85;
+      } else if (matchKeyword) {
+        extraWeight = 0.6;
+      } else if (matchCategory) {
+        extraWeight = 0.25;
+      }
+
+      if (extraWeight > 0) {
+        // Only add if not already present or if this is a higher weight
+        const edgeId = `edge-${skillIds[i]}-${skillIds[j]}`;
+        const reverseEdgeId = `edge-${skillIds[j]}-${skillIds[i]}`;
+        let existing = edgeMap.get(edgeId) || edgeMap.get(reverseEdgeId);
+        if (!existing || existing.weight < extraWeight) {
+          edgeMap.set(edgeId, {
+            id: edgeId,
+            source: skillIds[i],
+            target: skillIds[j],
+            overlapCount: 0,
+            weight: extraWeight
+          });
+        }
+      }
+    }
+  }
+
+  const edges = Array.from(edgeMap.values()).sort((a, b) => b.weight - a.weight);
 
   const categoryStats = new Map();
   for (const node of nodes) {
