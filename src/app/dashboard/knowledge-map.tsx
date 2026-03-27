@@ -311,17 +311,26 @@ export default function KnowledgeMapScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Search Bar */}
+      {/* Search Bar with Cluster Toggle */}
       <View style={styles.searchBarWrap}>
-        <TextInput
-          style={styles.searchBar}
-          placeholder="Search skill..."
-          placeholderTextColor="#7B6F4B"
-          value={search}
-          onChangeText={setSearch}
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <TextInput
+            style={[styles.searchBar, { flex: 1 }]}
+            placeholder="Search skill..."
+            placeholderTextColor="#7B6F4B"
+            value={search}
+            onChangeText={setSearch}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          <TouchableOpacity
+            style={[styles.clusterToggleBtn, clusterMode ? styles.clusterToggleActive : null]}
+            onPress={() => setClusterMode((prev) => !prev)}
+            accessibilityLabel="Toggle cluster view"
+          >
+            <Text style={styles.clusterToggleText}>Cluster</Text>
+          </TouchableOpacity>
+        </View>
         {searchResults.length > 0 && (
           <View style={styles.searchResultsBox}>
             <FlatList
@@ -515,6 +524,29 @@ const styles = StyleSheet.create({
     paddingTop: 18,
     backgroundColor: '#F5F3E7',
     zIndex: 10
+  },
+  clusterToggleBtn: {
+    marginLeft: 10,
+    paddingVertical: 7,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    backgroundColor: '#E6E4D9',
+    borderWidth: 1,
+    borderColor: '#D6D1B1',
+    shadowColor: '#B5A77A',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 2,
+    elevation: 1
+  },
+  clusterToggleActive: {
+    backgroundColor: '#2A9D8F',
+    borderColor: '#1E7A6D',
+  },
+  clusterToggleText: {
+    color: '#1E7A6D',
+    fontWeight: '700',
+    fontSize: 14
   },
   searchBar: {
     width: '100%',
