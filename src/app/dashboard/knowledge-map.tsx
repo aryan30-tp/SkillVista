@@ -35,15 +35,13 @@ interface CameraState {
 const CAMERA_DEFAULT: CameraState = {
   rotationX: -0.2,
   rotationY: 0.35,
-  zoom: 2.0 // Reduced initial zoom for a more zoomed-out view
+  zoom: 1.00 // Set initial zoom for largest graph size
 };
 
 const EDGE_MIN_ALPHA = 0.15;
 const EDGE_MAX_ALPHA = 0.55;
 
 export default function KnowledgeMapScreen() {
-
-  // All state and ref declarations first
   const [search, setSearch] = useState("");
   const [searchResults, setSearchResults] = useState<SkillGraphNode[]>([]);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -56,17 +54,6 @@ export default function KnowledgeMapScreen() {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [localSelectedNode, setLocalSelectedNode] = useState<SkillGraphNode | null>(null);
   const [camera, setCamera] = useState<CameraState>(CAMERA_DEFAULT);
-
-  // Compute focus set for opacity logic (must come after state declarations)
-  const focusNodeIds = useMemo(() => {
-    if (!localSelectedNode) return null;
-    const related = new Set([localSelectedNode.id]);
-    edges.forEach((edge) => {
-      if (edge.source === localSelectedNode.id) related.add(edge.target);
-      if (edge.target === localSelectedNode.id) related.add(edge.source);
-    });
-    return related;
-  }, [localSelectedNode, edges]);
 
   // Search logic
   useEffect(() => {
@@ -249,7 +236,6 @@ export default function KnowledgeMapScreen() {
               return;
             }
 
-
             const delta = distance / Math.max(initialTouchDistanceRef.current, 1);
             const nextZoom = Math.max(0.6, Math.min(4.0, initialZoomRef.current * delta));
 
@@ -311,11 +297,11 @@ export default function KnowledgeMapScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Search Bar with Cluster Toggle */}
-      <View style={styles.searchBarWrap}>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+      {/* Search Bar + Cluster Button */}
+      <View style={styles.searchBarRow}>
+        <View style={{ flex: 1 }}>
           <TextInput
-            style={[styles.searchBar, { flex: 1 }]}
+            style={styles.searchBar}
             placeholder="Search skill..."
             placeholderTextColor="#7B6F4B"
             value={search}
@@ -323,53 +309,42 @@ export default function KnowledgeMapScreen() {
             autoCapitalize="none"
             autoCorrect={false}
           />
-          <TouchableOpacity
-            style={[styles.clusterToggleBtn, clusterMode ? styles.clusterToggleActive : null]}
-            onPress={() => setClusterMode((prev) => !prev)}
-            accessibilityLabel="Toggle cluster view"
-          >
-            <Text style={styles.clusterToggleText}>Cluster</Text>
-          </TouchableOpacity>
+          {searchResults.length > 0 && (
+            <View style={styles.searchResultsBox}>
+              <FlatList
+                data={searchResults}
+                keyExtractor={(item) => item.id}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={styles.searchResultItem}
+                    onPress={() => {
+                      setSelectedNodeId(item.id);
+                      setSearch("");
+                      setSearchResults([]);
+                    }}
+                  >
+                    <Text style={styles.searchResultText}>{item.name}</Text>
+                  </TouchableOpacity>
+                )}
+              />
+            </View>
+          )}
         </View>
-        {searchResults.length > 0 && (
-          <View style={styles.searchResultsBox}>
-            <FlatList
-              data={searchResults}
-              keyExtractor={(item) => item.id}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={styles.searchResultItem}
-                  onPress={() => {
-                    setSelectedNodeId(item.id);
-                    setSearch("");
-                    setSearchResults([]);
-                  }}
-                >
-                  <Text style={styles.searchResultText}>{item.name}</Text>
-                </TouchableOpacity>
-              )}
-            />
-          </View>
-        )}
+        <TouchableOpacity
+          style={[styles.clusterButton, clusterMode && styles.clusterButtonActive]}
+          onPress={() => setClusterMode((prev) => !prev)}
+          accessibilityLabel="Toggle cluster view"
+        >
+          <Text style={[styles.clusterButtonText, clusterMode && styles.clusterButtonTextActive]}>Cluster</Text>
+        </TouchableOpacity>
       </View>
       <View style={styles.mapFrame} {...panResponder.panHandlers}>
         <View style={styles.graphPlaneCentered}>
           {visibleEdges.map(({ edge, length, angle, centerX, centerY }) => {
-            // Opacity logic for edges
-            let edgeOpacity = Math.max(
+            const alpha = Math.max(
               EDGE_MIN_ALPHA,
               Math.min(EDGE_MAX_ALPHA, EDGE_MIN_ALPHA + edge.weight * EDGE_MAX_ALPHA)
             );
-            if (focusNodeIds) {
-              // Only keep edges fully visible if both ends are in focus set
-              if (focusNodeIds.has(edge.source) && focusNodeIds.has(edge.target)) {
-                edgeOpacity = 1;
-              } else {
-                edgeOpacity = 0.15;
-              }
-            } else {
-              edgeOpacity = 1;
-            }
             return (
               <View
                 key={edge.id}
@@ -379,7 +354,7 @@ export default function KnowledgeMapScreen() {
                     width: Math.max(1, length),
                     left: centerX - length / 2,
                     top: centerY,
-                    opacity: edgeOpacity,
+                    opacity: alpha,
                     backgroundColor: "#7A7A7A",
                     transform: [{ rotateZ: `${angle}rad` }]
                   }
@@ -389,13 +364,6 @@ export default function KnowledgeMapScreen() {
           })}
           {projectedNodes.map(({ node, screenX, screenY, radius }) => {
             const isSelected = localSelectedNode && localSelectedNode.id === node.id;
-            // Opacity logic for nodes
-            let nodeOpacity = 1;
-            if (focusNodeIds) {
-              nodeOpacity = focusNodeIds.has(node.id) ? 1 : 0.15;
-            } else {
-              nodeOpacity = 1;
-            }
             return (
               <Pressable
                 key={node.id}
@@ -410,8 +378,7 @@ export default function KnowledgeMapScreen() {
                     top: screenY - radius,
                     backgroundColor: node.color,
                     borderWidth: isSelected ? 2 : 0,
-                    borderColor: "#102A43",
-                    opacity: nodeOpacity
+                    borderColor: "#102A43"
                   }
                 ]}
               >
@@ -450,15 +417,7 @@ export default function KnowledgeMapScreen() {
                 <Text style={styles.drawerSubtitle}>{localSelectedNode.category}</Text>
               </View>
               <Pressable onPress={() => setSelectedNodeId(null)}>
-                <Text
-                  style={styles.drawerClose}
-                  onPress={() => {
-                    setSelectedNodeId(null);
-                    setLocalSelectedNode(null);
-                  }}
-                >
-                  Close
-                </Text>
+                <Text style={styles.drawerClose}>Close</Text>
               </Pressable>
             </View>
             <View style={styles.drawerMetrics}>
@@ -518,35 +477,47 @@ export default function KnowledgeMapScreen() {
 }
 
 const styles = StyleSheet.create({
-  searchBarWrap: {
+  searchBarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     width: '100%',
     paddingHorizontal: 18,
     paddingTop: 18,
     backgroundColor: '#F5F3E7',
-    zIndex: 10
+    zIndex: 10,
+    gap: 10
   },
-  clusterToggleBtn: {
-    marginLeft: 10,
-    paddingVertical: 7,
+  searchBarWrap: {
+    display: 'none' // replaced by searchBarRow
+  },
+  clusterButton: {
+    backgroundColor: '#EFE9D7',
+    borderRadius: 8,
     paddingHorizontal: 16,
-    borderRadius: 10,
-    backgroundColor: '#E6E4D9',
+    paddingVertical: 10,
     borderWidth: 1,
     borderColor: '#D6D1B1',
+    marginLeft: 6,
+    minWidth: 70,
+    alignItems: 'center',
+    justifyContent: 'center',
     shadowColor: '#B5A77A',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06,
+    shadowOpacity: 0.08,
     shadowRadius: 2,
-    elevation: 1
+    elevation: 2
   },
-  clusterToggleActive: {
+  clusterButtonActive: {
     backgroundColor: '#2A9D8F',
-    borderColor: '#1E7A6D',
+    borderColor: '#21867A',
   },
-  clusterToggleText: {
-    color: '#1E7A6D',
+  clusterButtonText: {
+    color: '#3A3A29',
     fontWeight: '700',
-    fontSize: 14
+    fontSize: 15
+  },
+  clusterButtonTextActive: {
+    color: '#FFF',
   },
   searchBar: {
     width: '100%',

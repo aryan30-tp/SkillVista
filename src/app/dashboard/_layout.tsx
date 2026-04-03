@@ -1,11 +1,8 @@
 import React from "react";
 import { Text } from "react-native";
 import { Tabs } from "expo-router";
-import { useAuth } from "../../context/AuthContext";
 
 export default function DashboardLayout() {
-  const { logout } = useAuth();
-
   return (
     <Tabs
       screenOptions={{
@@ -17,6 +14,38 @@ export default function DashboardLayout() {
         tabBarLabelStyle: { fontSize: 12, marginTop: -6 }
       }}
     >
+      <Tabs.Screen
+        name="summary"
+        options={{
+          title: "Summary",
+          tabBarLabel: "Summary",
+          tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>📊</Text>
+        }}
+      />
+      <Tabs.Screen
+        name="projects"
+        options={{
+          title: "Projects",
+          tabBarLabel: "Projects",
+          tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>💼</Text>
+        }}
+      />
+      <Tabs.Screen
+        name="insights"
+        options={{
+          title: "AI Insights",
+          tabBarLabel: "Insights",
+          tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>🚀</Text>
+        }}
+      />
+      <Tabs.Screen
+        name="resume"
+        options={{
+          title: "Resume",
+          tabBarLabel: "Resume",
+          tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>📄</Text>
+        }}
+      />
       <Tabs.Screen
         name="index"
         options={{

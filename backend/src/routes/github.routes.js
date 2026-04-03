@@ -1,5 +1,7 @@
 const express = require("express");
 const { Octokit } = require("@octokit/rest");
+const PDFDocument = require("pdfkit");
+const jwt = require("jsonwebtoken");
 
 const auth = require("../middleware/auth");
 const User = require("../../models/User");
@@ -109,6 +111,337 @@ const CATEGORY_COLORS = {
 
 const buildEdgeKey = (a, b) => {
   return a < b ? `${a}::${b}` : `${b}::${a}`;
+};
+
+const clamp = (value, min, max) => {
+  return Math.max(min, Math.min(max, value));
+};
+
+const COMPLEXITY_BANDS = [
+  { min: 80, label: "Advanced" },
+  { min: 55, label: "Intermediate" },
+  { min: 0, label: "Beginner" }
+];
+
+const getComplexityLabel = (score) => {
+  const band = COMPLEXITY_BANDS.find((entry) => score >= entry.min);
+  return band ? band.label : "Beginner";
+};
+
+const calculateComplexityScore = (analysis) => {
+  const dependencyCount = (analysis.dependencies || []).length;
+  const devDependencyCount = (analysis.devDependencies || []).length;
+  const ecosystemDependencyCount = (analysis.ecosystemDependencies || []).length;
+  const importCount = (analysis.importPackages || []).length;
+  const stars = Number(analysis.stargazersCount || 0);
+
+  const rawScore =
+    dependencyCount * 2 +
+    devDependencyCount * 1 +
+    ecosystemDependencyCount * 2 +
+    importCount * 1.5 +
+    Math.log10(stars + 1) * 8 +
+    (analysis.language ? 8 : 0) +
+    (analysis.hasPackageJson ? 6 : 0);
+
+  return Math.round(clamp(rawScore, 5, 100));
+};
+
+const buildProjectTechStack = (analysis) => {
+  const set = new Set();
+
+  if (analysis.language) {
+    set.add(String(analysis.language));
+  }
+
+  for (const dep of analysis.dependencies || []) {
+    if (set.size >= 8) break;
+    set.add(dep);
+  }
+  for (const dep of analysis.ecosystemDependencies || []) {
+    if (set.size >= 8) break;
+    set.add(dep);
+  }
+  for (const dep of analysis.importPackages || []) {
+    if (set.size >= 8) break;
+    set.add(dep);
+  }
+
+  return Array.from(set);
+};
+
+const buildConnectedSkillsForProject = (analysis, userSkillMap) => {
+  const extracted = extractSkillsFromRepo({
+    dependencies: [...(analysis.dependencies || []), ...(analysis.ecosystemDependencies || [])],
+    devDependencies: analysis.devDependencies || [],
+    importPackages: analysis.importPackages || [],
+    language: analysis.language,
+    hasPackageJson: analysis.hasPackageJson
+  });
+
+  return extracted
+    .map((entry) => {
+      const found = userSkillMap.get(String(entry.name || "").toLowerCase());
+      return {
+        name: entry.name,
+        category: entry.category,
+        confidenceScore: Number(found?.confidenceScore ?? entry.confidenceScore ?? 0)
+      };
+    })
+    .sort((a, b) => b.confidenceScore - a.confidenceScore)
+    .slice(0, 6);
+};
+
+const ROLE_BASELINES = {
+  "fullstack-developer": [
+    "javascript",
+    "typescript",
+    "react",
+    "node.js",
+    "express",
+    "mongodb",
+    "git",
+    "docker",
+    "aws"
+  ],
+  "data-scientist": ["python", "pandas", "numpy", "scikit-learn", "tensorflow", "sql", "git"],
+  "ml-engineer": [
+    "python",
+    "tensorflow",
+    "pytorch",
+    "docker",
+    "kubernetes",
+    "mlflow",
+    "sql"
+  ]
+};
+
+const buildInsightsPayload = (skills, targetRole = "fullstack-developer") => {
+  const normalizedRole = ROLE_BASELINES[targetRole] ? targetRole : "fullstack-developer";
+  const baseline = ROLE_BASELINES[normalizedRole];
+  const skillSet = new Set(skills.map((entry) => String(entry.name || "").toLowerCase()));
+
+  const missing = baseline.filter((skill) => !skillSet.has(skill));
+  const strengths = skills
+    .slice()
+    .sort((a, b) => Number(b.confidenceScore || 0) - Number(a.confidenceScore || 0))
+    .slice(0, 5)
+    .map((entry) => ({
+      name: entry.name,
+      category: entry.category,
+      score: Math.round(Number(entry.confidenceScore || 0) * 100)
+    }));
+
+  const baselineCoverage = baseline.length ? (baseline.length - missing.length) / baseline.length : 0;
+  const averageConfidence =
+    skills.length > 0
+      ? skills.reduce((sum, entry) => sum + Number(entry.confidenceScore || 0), 0) / skills.length
+      : 0;
+
+  const careerReadinessScore = Math.round(clamp((baselineCoverage * 0.7 + averageConfidence * 0.3) * 100, 0, 100));
+
+  const certificationSuggestions = [];
+  if (missing.includes("aws") || missing.includes("docker") || missing.includes("kubernetes")) {
+    certificationSuggestions.push("AWS Certified Cloud Practitioner");
+  }
+  if (missing.includes("tensorflow") || missing.includes("pytorch")) {
+    certificationSuggestions.push("TensorFlow Developer Certificate");
+  }
+  if (missing.includes("mongodb") || missing.includes("sql")) {
+    certificationSuggestions.push("MongoDB Associate Developer");
+  }
+  if (certificationSuggestions.length === 0) {
+    certificationSuggestions.push("GitHub Foundations", "Google Cloud Digital Leader");
+  }
+
+  const suggestedProjects = [
+    {
+      title: "Role-focused Capstone",
+      description: `Build a deployable ${normalizedRole.replace(/-/g, " ")} project using at least 3 missing skills.`,
+      skillsToPractice: missing.slice(0, 3)
+    },
+    {
+      title: "Production Pipeline Project",
+      description: "Create CI/CD-enabled app with testing, linting, and containerized deployment.",
+      skillsToPractice: ["git", "docker", "aws"].filter((skill) => missing.includes(skill))
+    }
+  ];
+
+  return {
+    targetRole: normalizedRole,
+    careerReadinessScore,
+    skillGapAnalysis: {
+      baselineSkills: baseline,
+      missingSkills: missing,
+      coveragePercentage: Math.round(baselineCoverage * 100)
+    },
+    suggestedNextSkills: missing.slice(0, 6),
+    recommendedCertifications: certificationSuggestions,
+    suggestedProjects,
+    strengths
+  };
+};
+
+const buildPublicApiBase = (req) => {
+  if (process.env.PUBLIC_API_BASE_URL) {
+    return process.env.PUBLIC_API_BASE_URL.replace(/\/$/, "");
+  }
+
+  return `${req.protocol}://${req.get("host")}/api`;
+};
+
+const resolveUserIdFromRequest = (req) => {
+  const authHeader = req.header("Authorization") || "";
+  const bearerToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : null;
+  const queryToken = typeof req.query.token === "string" ? req.query.token : null;
+  const token = bearerToken || queryToken;
+
+  if (!token) {
+    return null;
+  }
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || "your-secret-key");
+    return decoded.userId || null;
+  } catch (_error) {
+    return null;
+  }
+};
+
+const buildResumePayload = (user, skills, insights) => {
+  const certifications = Array.isArray(user.certifications) ? user.certifications : [];
+  const topSkills = skills
+    .slice()
+    .sort((a, b) => Number(b.confidenceScore || 0) - Number(a.confidenceScore || 0))
+    .slice(0, 12)
+    .map((entry) => ({
+      name: entry.name,
+      category: entry.category,
+      confidenceScore: Math.round(Number(entry.confidenceScore || 0) * 100)
+    }));
+
+  const summary = `${user.name} is a software practitioner with strengths in ${topSkills
+    .slice(0, 3)
+    .map((entry) => entry.name)
+    .join(", ") || "modern development"}. Current role readiness is ${insights.careerReadinessScore}% for ${
+    insights.targetRole
+  }.`;
+
+  return {
+    basics: {
+      name: user.name,
+      email: user.email,
+      githubUsername: user.githubUsername || null,
+      headline: "Software Developer",
+      summary
+    },
+    skills: topSkills,
+    certifications: certifications.map((item) => ({
+      name: item.name,
+      issuer: item.issuer || "",
+      issuedAt: item.issuedAt || null,
+      credentialUrl: item.credentialUrl || ""
+    })),
+    insights: {
+      careerReadinessScore: insights.careerReadinessScore,
+      targetRole: insights.targetRole,
+      missingSkills: insights.skillGapAnalysis.missingSkills
+    }
+  };
+};
+
+const buildAtsScore = (resumePayload, insights) => {
+  const hasSummary = resumePayload.basics.summary && resumePayload.basics.summary.length >= 40;
+  const hasSkills = resumePayload.skills.length >= 6;
+  const hasCertifications = resumePayload.certifications.length > 0;
+  const roleCoverage = Number(insights.skillGapAnalysis.coveragePercentage || 0);
+
+  let score = 0;
+  score += hasSummary ? 20 : 8;
+  score += hasSkills ? 30 : Math.min(30, resumePayload.skills.length * 4);
+  score += hasCertifications ? 10 : 4;
+  score += Math.round(roleCoverage * 0.4);
+  score += Math.round((insights.careerReadinessScore || 0) * 0.2);
+
+  const atsScore = Math.round(clamp(score, 0, 100));
+  const suggestions = [];
+  if (!hasSummary) suggestions.push("Add a concise professional summary with measurable impact.");
+  if (!hasSkills) suggestions.push("Include at least 6 role-relevant skills with clear prioritization.");
+  if (!hasCertifications) suggestions.push("Add one certification or credential URL to improve trust signals.");
+  if (roleCoverage < 70) {
+    suggestions.push("Reduce role skill gaps by adding baseline technologies for your target role.");
+  }
+
+  return {
+    score: atsScore,
+    band: atsScore >= 80 ? "Strong" : atsScore >= 60 ? "Moderate" : "Needs Work",
+    suggestions
+  };
+};
+
+const buildResumePdfBuffer = (resumePayload, ats) => {
+  return new Promise((resolve, reject) => {
+    try {
+      const doc = new PDFDocument({ margin: 42 });
+      const buffers = [];
+
+      doc.on("data", (chunk) => buffers.push(chunk));
+      doc.on("end", () => resolve(Buffer.concat(buffers)));
+      doc.on("error", reject);
+
+      doc.fontSize(22).text(resumePayload.basics.name || "Unknown", { underline: false });
+      doc.moveDown(0.3);
+      doc
+        .fontSize(11)
+        .fillColor("#333")
+        .text(`Email: ${resumePayload.basics.email || "N/A"}`)
+        .text(`GitHub: ${resumePayload.basics.githubUsername || "N/A"}`)
+        .text(`Target Role: ${resumePayload.insights.targetRole || "N/A"}`)
+        .text(`ATS Score: ${ats.score} (${ats.band})`);
+
+      doc.moveDown(0.8);
+      doc.fontSize(14).fillColor("#111").text("Professional Summary");
+      doc.fontSize(11).fillColor("#333").text(resumePayload.basics.summary || "");
+
+      doc.moveDown(0.8);
+      doc.fontSize(14).fillColor("#111").text("Top Skills");
+      doc
+        .fontSize(11)
+        .fillColor("#333")
+        .text(
+          resumePayload.skills
+            .map((item) => `${item.name} (${item.confidenceScore}%)`)
+            .join(", ") || "No skills available"
+        );
+
+      doc.moveDown(0.8);
+      doc.fontSize(14).fillColor("#111").text("Certifications");
+      if (!resumePayload.certifications.length) {
+        doc.fontSize(11).fillColor("#666").text("No certifications added yet.");
+      } else {
+        resumePayload.certifications.forEach((item) => {
+          doc
+            .fontSize(11)
+            .fillColor("#333")
+            .text(`${item.name} - ${item.issuer || "Issuer not specified"}`);
+        });
+      }
+
+      doc.moveDown(0.8);
+      doc.fontSize(14).fillColor("#111").text("ATS Improvement Suggestions");
+      if (!ats.suggestions.length) {
+        doc.fontSize(11).fillColor("#333").text("Resume is already ATS-ready for this baseline role.");
+      } else {
+        ats.suggestions.forEach((item) => {
+          doc.fontSize(11).fillColor("#333").text(`- ${item}`);
+        });
+      }
+
+      doc.end();
+    } catch (error) {
+      reject(error);
+    }
+  });
 };
 
 
@@ -266,6 +599,94 @@ const buildSkillGraphPayload = (skillList, user) => {
       repositoryCount: Number(user.repositoryCount || 0),
       lastSyncedAt: user.lastSkillSync || null,
       clusters
+    }
+  };
+};
+
+const formatActivityDate = (value) => {
+  if (!value) {
+    return null;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return date.toISOString();
+};
+
+const buildDashboardSummary = (user, skillList) => {
+  const totalSkills = skillList.length;
+  const totalProjects = Number(user.repositoryCount || 0);
+  const certifications = Array.isArray(user.certifications) ? user.certifications.length : 0;
+
+  const averageConfidence = totalSkills
+    ? skillList.reduce((sum, entry) => sum + Number(entry.confidenceScore || 0), 0) / totalSkills
+    : 0;
+
+  const skillStrengthScore = Math.round(averageConfidence * 100);
+
+  // Heuristic baseline readiness score (non-NLP) until target-role model is plugged in.
+  const breadthComponent = Math.min(totalSkills / 20, 1);
+  const projectComponent = Math.min(totalProjects / 10, 1);
+  const certificationComponent = Math.min(certifications / 5, 1);
+  const readinessPercentage = Math.round(
+    (breadthComponent * 0.35 + projectComponent * 0.3 + averageConfidence * 0.25 + certificationComponent * 0.1) *
+      100
+  );
+
+  const topSkills = skillList
+    .slice()
+    .sort((a, b) => Number(b.confidenceScore || 0) - Number(a.confidenceScore || 0))
+    .slice(0, 5)
+    .map((entry) => ({
+      name: entry.name,
+      category: entry.category,
+      confidenceScore: Number(entry.confidenceScore || 0)
+    }));
+
+  const recentActivity = [
+    user.lastSkillSync
+      ? {
+          type: "skill_sync",
+          title: "Skills synced from GitHub",
+          timestamp: formatActivityDate(user.lastSkillSync)
+        }
+      : null,
+    user.githubId
+      ? {
+          type: "github_connected",
+          title: "GitHub connected",
+          timestamp: formatActivityDate(user.updatedAt)
+        }
+      : null,
+    {
+      type: "account_created",
+      title: "Account created",
+      timestamp: formatActivityDate(user.createdAt)
+    }
+  ]
+    .filter(Boolean)
+    .sort((a, b) => {
+      const tA = new Date(a.timestamp || 0).getTime();
+      const tB = new Date(b.timestamp || 0).getTime();
+      return tB - tA;
+    });
+
+  return {
+    totals: {
+      skills: totalSkills,
+      projects: totalProjects,
+      certifications
+    },
+    skillStrengthScore,
+    readinessPercentage,
+    topSkills,
+    recentActivity,
+    metadata: {
+      calculatedAt: new Date().toISOString(),
+      lastSkillSync: formatActivityDate(user.lastSkillSync)
     }
   };
 };
@@ -762,6 +1183,220 @@ router.get("/skills", auth, async (req, res) => {
   } catch (error) {
     console.error("Get skills error:", error.message);
     res.status(500).json({ error: "Failed to fetch skills" });
+  }
+});
+
+router.get("/projects", auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.userId).populate("skills.skillId");
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    if (!user.githubAccessToken) {
+      return res.status(400).json({ error: "GitHub account not connected" });
+    }
+
+    const userSkillMap = new Map(
+      user.skills
+        .filter((entry) => entry.skillId)
+        .map((entry) => [String(entry.skillId.name || "").toLowerCase(), entry])
+    );
+
+    const octokit = getOctokit(user.githubAccessToken);
+    const { data: repos } = await octokit.repos.listForAuthenticatedUser({
+      visibility: "all",
+      sort: "updated",
+      per_page: 30
+    });
+
+    const analyses = await mapWithConcurrency(repos, REPO_ANALYSIS_CONCURRENCY, async (repo) => {
+      return buildRepoAnalysis(octokit, repo);
+    });
+
+    const projects = analyses.map((analysis) => {
+      const complexityScore = calculateComplexityScore(analysis);
+      return {
+        id: analysis.id,
+        name: analysis.name,
+        description: "",
+        repositoryUrl: analysis.htmlUrl,
+        updatedAt: analysis.pushedAt,
+        stars: analysis.stargazersCount,
+        techStack: buildProjectTechStack(analysis),
+        complexityScore,
+        complexityLabel: getComplexityLabel(complexityScore),
+        connectedSkills: buildConnectedSkillsForProject(analysis, userSkillMap)
+      };
+    });
+
+    return res.json({
+      total: projects.length,
+      projects
+    });
+  } catch (error) {
+    console.error("Get projects error:", error.message);
+    return res.status(500).json({ error: "Failed to fetch projects" });
+  }
+});
+
+router.get("/insights", auth, async (req, res) => {
+  try {
+    const targetRole = typeof req.query.targetRole === "string" ? req.query.targetRole : "fullstack-developer";
+    const user = await User.findById(req.userId).populate("skills.skillId");
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const skills = user.skills
+      .filter((entry) => entry.skillId)
+      .map((entry) => ({
+        name: entry.skillId.name,
+        category: entry.skillId.category,
+        confidenceScore: Number(entry.confidenceScore || 0)
+      }));
+
+    const payload = buildInsightsPayload(skills, targetRole);
+    return res.json(payload);
+  } catch (error) {
+    console.error("Get insights error:", error.message);
+    return res.status(500).json({ error: "Failed to fetch AI insights" });
+  }
+});
+
+router.get("/resume-portfolio", auth, async (req, res) => {
+  try {
+    const targetRole = typeof req.query.targetRole === "string" ? req.query.targetRole : "fullstack-developer";
+    const user = await User.findById(req.userId).populate("skills.skillId");
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const skills = user.skills
+      .filter((entry) => entry.skillId)
+      .map((entry) => ({
+        name: entry.skillId.name,
+        category: entry.skillId.category,
+        confidenceScore: Number(entry.confidenceScore || 0)
+      }));
+
+    const insights = buildInsightsPayload(skills, targetRole);
+    const resume = buildResumePayload(user, skills, insights);
+    const ats = buildAtsScore(resume, insights);
+    const apiBase = buildPublicApiBase(req);
+    const username = user.githubUsername || String(user._id);
+
+    return res.json({
+      resume,
+      ats,
+      portfolioLink: `${apiBase}/github/portfolio/${encodeURIComponent(username)}`
+    });
+  } catch (error) {
+    console.error("Get resume portfolio error:", error.message);
+    return res.status(500).json({ error: "Failed to generate resume portfolio" });
+  }
+});
+
+router.get("/resume.pdf", async (req, res) => {
+  try {
+    const targetRole = typeof req.query.targetRole === "string" ? req.query.targetRole : "fullstack-developer";
+    const resolvedUserId = resolveUserIdFromRequest(req);
+    if (!resolvedUserId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const user = await User.findById(resolvedUserId).populate("skills.skillId");
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const skills = user.skills
+      .filter((entry) => entry.skillId)
+      .map((entry) => ({
+        name: entry.skillId.name,
+        category: entry.skillId.category,
+        confidenceScore: Number(entry.confidenceScore || 0)
+      }));
+
+    const insights = buildInsightsPayload(skills, targetRole);
+    const resume = buildResumePayload(user, skills, insights);
+    const ats = buildAtsScore(resume, insights);
+    const pdfBuffer = await buildResumePdfBuffer(resume, ats);
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${(user.name || "resume").replace(/\s+/g, "-")}-resume.pdf"`);
+    return res.send(pdfBuffer);
+  } catch (error) {
+    console.error("Get resume pdf error:", error.message);
+    return res.status(500).json({ error: "Failed to generate resume PDF" });
+  }
+});
+
+router.get("/portfolio/:username", async (req, res) => {
+  try {
+    const username = String(req.params.username || "").trim();
+    if (!username) {
+      return res.status(400).json({ error: "Username is required" });
+    }
+
+    const user = await User.findOne({
+      $or: [{ githubUsername: username }, { _id: username.match(/^[a-f\d]{24}$/i) ? username : null }]
+    }).populate("skills.skillId");
+
+    if (!user) {
+      return res.status(404).json({ error: "Portfolio not found" });
+    }
+
+    const skills = user.skills
+      .filter((entry) => entry.skillId)
+      .map((entry) => ({
+        name: entry.skillId.name,
+        category: entry.skillId.category,
+        confidenceScore: Number(entry.confidenceScore || 0)
+      }));
+
+    const insights = buildInsightsPayload(skills, "fullstack-developer");
+    const resume = buildResumePayload(user, skills, insights);
+
+    return res.json({
+      profile: {
+        name: user.name,
+        githubUsername: user.githubUsername || null
+      },
+      resume,
+      generatedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error("Get public portfolio error:", error.message);
+    return res.status(500).json({ error: "Failed to fetch portfolio" });
+  }
+});
+
+router.get("/summary", auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.userId).populate("skills.skillId");
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const skillList = user.skills
+      .filter((entry) => entry.skillId)
+      .map((entry) => ({
+        _id: entry.skillId._id,
+        name: entry.skillId.name,
+        category: entry.skillId.category,
+        confidenceScore: entry.confidenceScore,
+        detectedInRepos: entry.detectedInRepos || []
+      }));
+
+    const payload = buildDashboardSummary(user, skillList);
+    return res.json(payload);
+  } catch (error) {
+    console.error("Get dashboard summary error:", error.message);
+    return res.status(500).json({ error: "Failed to fetch dashboard summary" });
   }
 });
 

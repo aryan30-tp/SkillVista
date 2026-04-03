@@ -57,7 +57,30 @@ const userSchema = new mongoose.Schema(
     repositoryCount: {
       type: Number,
       default: 0
-    }
+    },
+    certifications: [
+      {
+        name: {
+          type: String,
+          trim: true,
+          required: true
+        },
+        issuer: {
+          type: String,
+          trim: true,
+          default: ""
+        },
+        issuedAt: {
+          type: Date,
+          default: null
+        },
+        credentialUrl: {
+          type: String,
+          trim: true,
+          default: ""
+        }
+      }
+    ]
   },
   {
     timestamps: true
