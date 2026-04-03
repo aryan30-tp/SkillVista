@@ -33,6 +33,30 @@ const sanitizePreferences = (raw) => {
   };
 };
 
+const sanitizeCertificationInput = (raw = {}) => {
+  const name = String(raw.name || "").trim();
+  const issuer = String(raw.issuer || "").trim();
+  const credentialUrl = String(raw.credentialUrl || "").trim();
+  const issuedAtRaw = raw.issuedAt ? new Date(raw.issuedAt) : null;
+
+  return {
+    name,
+    issuer,
+    credentialUrl,
+    issuedAt: issuedAtRaw && !Number.isNaN(issuedAtRaw.getTime()) ? issuedAtRaw : null
+  };
+};
+
+const serializeCertifications = (certifications = []) => {
+  return certifications.map((item) => ({
+    id: String(item._id),
+    name: item.name,
+    issuer: item.issuer || "",
+    issuedAt: item.issuedAt || null,
+    credentialUrl: item.credentialUrl || ""
+  }));
+};
+
 const isAllowedMobileRedirectUri = (uri) => {
   if (!uri || typeof uri !== "string") {
     return false;
@@ -239,6 +263,71 @@ router.put("/preferences", auth, async (req, res) => {
   } catch (error) {
     console.error("Update preferences error:", error.message);
     return res.status(500).json({ error: "Failed to update preferences" });
+  }
+});
+
+router.get("/certifications", auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.userId).select("certifications");
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    return res.json({ certifications: serializeCertifications(user.certifications || []) });
+  } catch (error) {
+    console.error("Get certifications error:", error.message);
+    return res.status(500).json({ error: "Failed to fetch certifications" });
+  }
+});
+
+router.post("/certifications", auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.userId);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const certification = sanitizeCertificationInput(req.body || {});
+    if (!certification.name) {
+      return res.status(400).json({ error: "Certification name is required" });
+    }
+
+    user.certifications.push(certification);
+    await user.save();
+
+    return res.status(201).json({
+      message: "Certification added",
+      certifications: serializeCertifications(user.certifications || [])
+    });
+  } catch (error) {
+    console.error("Add certification error:", error.message);
+    return res.status(500).json({ error: "Failed to add certification" });
+  }
+});
+
+router.delete("/certifications/:certificationId", auth, async (req, res) => {
+  try {
+    const { certificationId } = req.params;
+    const user = await User.findById(req.userId);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const cert = user.certifications.id(certificationId);
+    if (!cert) {
+      return res.status(404).json({ error: "Certification not found" });
+    }
+
+    cert.deleteOne();
+    await user.save();
+
+    return res.json({
+      message: "Certification removed",
+      certifications: serializeCertifications(user.certifications || [])
+    });
+  } catch (error) {
+    console.error("Delete certification error:", error.message);
+    return res.status(500).json({ error: "Failed to delete certification" });
   }
 });
 

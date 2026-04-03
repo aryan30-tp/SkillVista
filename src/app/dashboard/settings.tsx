@@ -7,7 +7,8 @@ import {
   Alert,
   ScrollView,
   Switch,
-  ActivityIndicator
+  ActivityIndicator,
+  TextInput
 } from "react-native";
 import { useAuth } from "../../context/AuthContext";
 import { useRouter } from "expo-router";
@@ -25,6 +26,14 @@ interface Preferences {
   notifications: boolean;
 }
 
+interface Certification {
+  id: string;
+  name: string;
+  issuer: string;
+  issuedAt: string | null;
+  credentialUrl: string;
+}
+
 const DEFAULT_PREFERENCES: Preferences = {
   themeMode: "light",
   privacyLevel: "private",
@@ -36,16 +45,28 @@ export default function SettingsScreen() {
   const { logout, user, disconnectGitHub } = useAuth();
   const router = useRouter();
   const [preferences, setPreferences] = useState<Preferences>(DEFAULT_PREFERENCES);
+  const [certifications, setCertifications] = useState<Certification[]>([]);
+  const [certName, setCertName] = useState("");
+  const [certIssuer, setCertIssuer] = useState("");
+  const [certDate, setCertDate] = useState("");
+  const [certUrl, setCertUrl] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [certLoading, setCertLoading] = useState(false);
 
-  const fetchPreferences = useCallback(async () => {
+  const fetchSettingsData = useCallback(async () => {
     try {
       setLoading(true);
-      const response = await api.get<{ preferences: Preferences }>("/auth/preferences");
-      setPreferences(response.data.preferences || DEFAULT_PREFERENCES);
+      const [preferencesRes, certificationsRes] = await Promise.all([
+        api.get<{ preferences: Preferences }>("/auth/preferences"),
+        api.get<{ certifications: Certification[] }>("/auth/certifications")
+      ]);
+
+      setPreferences(preferencesRes.data.preferences || DEFAULT_PREFERENCES);
+      setCertifications(certificationsRes.data.certifications || []);
     } catch (_error) {
       setPreferences(DEFAULT_PREFERENCES);
+      setCertifications([]);
     } finally {
       setLoading(false);
     }
@@ -53,8 +74,8 @@ export default function SettingsScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      fetchPreferences();
-    }, [fetchPreferences])
+      fetchSettingsData();
+    }, [fetchSettingsData])
   );
 
   const persistPreferences = async (next: Preferences) => {
@@ -64,9 +85,49 @@ export default function SettingsScreen() {
       await api.put("/auth/preferences", next);
     } catch (_error) {
       Alert.alert("Update Failed", "Could not save preferences. Please try again.");
-      fetchPreferences();
+      fetchSettingsData();
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleAddCertification = async () => {
+    if (!certName.trim()) {
+      Alert.alert("Missing name", "Certification name is required.");
+      return;
+    }
+
+    try {
+      setCertLoading(true);
+      const payload = {
+        name: certName.trim(),
+        issuer: certIssuer.trim(),
+        issuedAt: certDate.trim() || null,
+        credentialUrl: certUrl.trim()
+      };
+
+      const response = await api.post<{ certifications: Certification[] }>("/auth/certifications", payload);
+      setCertifications(response.data.certifications || []);
+      setCertName("");
+      setCertIssuer("");
+      setCertDate("");
+      setCertUrl("");
+    } catch (error: any) {
+      Alert.alert("Add Failed", error?.response?.data?.error || "Failed to add certification");
+    } finally {
+      setCertLoading(false);
+    }
+  };
+
+  const handleDeleteCertification = async (id: string) => {
+    try {
+      setCertLoading(true);
+      const response = await api.delete<{ certifications: Certification[] }>(`/auth/certifications/${id}`);
+      setCertifications(response.data.certifications || []);
+    } catch (error: any) {
+      Alert.alert("Delete Failed", error?.response?.data?.error || "Failed to delete certification");
+    } finally {
+      setCertLoading(false);
     }
   };
 
@@ -217,6 +278,68 @@ export default function SettingsScreen() {
       </View>
 
       <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Certifications</Text>
+
+        <View style={styles.settingItem}>
+          <TextInput
+            style={styles.input}
+            placeholder="Certification name"
+            value={certName}
+            onChangeText={setCertName}
+          />
+          <TextInput
+            style={styles.input}
+            placeholder="Issuer (optional)"
+            value={certIssuer}
+            onChangeText={setCertIssuer}
+          />
+          <TextInput
+            style={styles.input}
+            placeholder="Issued date (YYYY-MM-DD optional)"
+            value={certDate}
+            onChangeText={setCertDate}
+            autoCapitalize="none"
+          />
+          <TextInput
+            style={styles.input}
+            placeholder="Credential URL (optional)"
+            value={certUrl}
+            onChangeText={setCertUrl}
+            autoCapitalize="none"
+          />
+
+          <TouchableOpacity
+            style={[styles.primaryButton, certLoading && styles.primaryButtonDisabled]}
+            onPress={handleAddCertification}
+            disabled={certLoading}
+          >
+            <Text style={styles.primaryButtonText}>Add Certification</Text>
+          </TouchableOpacity>
+        </View>
+
+        {certifications.length === 0 ? (
+          <View style={styles.settingItem}>
+            <Text style={styles.settingDescription}>No certifications added yet.</Text>
+          </View>
+        ) : (
+          certifications.map((cert) => (
+            <View key={cert.id} style={styles.certItem}>
+              <View style={styles.certContent}>
+                <Text style={styles.settingLabel}>{cert.name}</Text>
+                <Text style={styles.settingValue}>{cert.issuer || "Issuer not specified"}</Text>
+                <Text style={styles.settingValue}>
+                  Issued: {cert.issuedAt ? new Date(cert.issuedAt).toLocaleDateString() : "Unknown"}
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => handleDeleteCertification(cert.id)} disabled={certLoading}>
+                <Text style={styles.removeText}>Remove</Text>
+              </TouchableOpacity>
+            </View>
+          ))
+        )}
+      </View>
+
+      <View style={styles.section}>
         <Text style={styles.sectionTitle}>GitHub Integration</Text>
 
         {user?.githubId ? (
@@ -342,6 +465,47 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#007AFF",
     fontWeight: "500"
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: "#ddd",
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 10,
+    fontSize: 13,
+    color: "#111"
+  },
+  primaryButton: {
+    backgroundColor: "#007AFF",
+    borderRadius: 8,
+    paddingVertical: 10,
+    alignItems: "center"
+  },
+  primaryButtonDisabled: {
+    opacity: 0.6
+  },
+  primaryButtonText: {
+    color: "#fff",
+    fontWeight: "700"
+  },
+  certItem: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: "#f0f0f0"
+  },
+  certContent: {
+    flex: 1,
+    marginRight: 10
+  },
+  removeText: {
+    color: "#DC2626",
+    fontWeight: "700",
+    fontSize: 12
   },
   infoBox: {
     paddingHorizontal: 16,
