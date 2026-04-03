@@ -20,7 +20,7 @@ export default function ProfileScreen() {
     try {
       setLoading(true);
       setSyncStatus("syncing");
-      await api.post("/github/sync-skills", {}, { timeout: 120000 });
+      await api.post("/github/sync-skills", {}, { timeout: 180000 });
       await refreshUser();
       Alert.alert("Success", "Skills synced successfully!");
       setSyncStatus("completed");

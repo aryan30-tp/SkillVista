@@ -18,6 +18,7 @@ const {
 const router = express.Router();
 
 const MAX_REPOS = 50;
+const MAX_PROJECT_REPOS = 20;
 const REPO_ANALYSIS_CONCURRENCY = 4;
 const SKILL_UPSERT_CONCURRENCY = 8;
 const VALID_CATEGORIES = [
@@ -442,6 +443,54 @@ const buildResumePdfBuffer = (resumePayload, ats) => {
       reject(error);
     }
   });
+};
+
+const buildAnalyticsPayload = (skills, user) => {
+  const categoryMap = new Map();
+  const confidenceBuckets = {
+    strong: 0,
+    medium: 0,
+    emerging: 0
+  };
+
+  for (const entry of skills) {
+    const category = entry.category || "other";
+    categoryMap.set(category, (categoryMap.get(category) || 0) + 1);
+
+    const score = Number(entry.confidenceScore || 0);
+    if (score >= 0.75) {
+      confidenceBuckets.strong += 1;
+    } else if (score >= 0.45) {
+      confidenceBuckets.medium += 1;
+    } else {
+      confidenceBuckets.emerging += 1;
+    }
+  }
+
+  const distribution = Array.from(categoryMap.entries())
+    .map(([category, count]) => ({ category, count }))
+    .sort((a, b) => b.count - a.count);
+
+  const avgConfidence =
+    skills.length > 0
+      ? skills.reduce((sum, entry) => sum + Number(entry.confidenceScore || 0), 0) / skills.length
+      : 0;
+
+  const learningTrend = {
+    lastSkillSync: user.lastSkillSync || null,
+    repositoryCount: Number(user.repositoryCount || 0),
+    totalSkills: skills.length,
+    averageConfidence: Number(avgConfidence.toFixed(3))
+  };
+
+  return {
+    categoryDistribution: distribution,
+    confidenceBuckets,
+    learningTrend,
+    metadata: {
+      generatedAt: new Date().toISOString()
+    }
+  };
 };
 
 
@@ -961,14 +1010,12 @@ router.get("/repos", auth, async (req, res) => {
     const { data: repos } = await octokit.repos.listForAuthenticatedUser({
       visibility: "all",
       sort: "updated",
-      per_page: MAX_REPOS
+      per_page: Math.min(MAX_REPOS, 30)
     });
 
-    const analyses = [];
-    for (const repo of repos) {
-      const analyzed = await buildRepoAnalysis(octokit, repo);
-      analyses.push(analyzed);
-    }
+    const analyses = await mapWithConcurrency(repos, REPO_ANALYSIS_CONCURRENCY, async (repo) => {
+      return buildRepoAnalysis(octokit, repo);
+    });
 
     res.json({
       total: analyses.length,
@@ -1207,7 +1254,7 @@ router.get("/projects", auth, async (req, res) => {
     const { data: repos } = await octokit.repos.listForAuthenticatedUser({
       visibility: "all",
       sort: "updated",
-      per_page: 30
+      per_page: MAX_PROJECT_REPOS
     });
 
     const analyses = await mapWithConcurrency(repos, REPO_ANALYSIS_CONCURRENCY, async (repo) => {
@@ -1397,6 +1444,30 @@ router.get("/summary", auth, async (req, res) => {
   } catch (error) {
     console.error("Get dashboard summary error:", error.message);
     return res.status(500).json({ error: "Failed to fetch dashboard summary" });
+  }
+});
+
+router.get("/analytics", auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.userId).populate("skills.skillId");
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const skills = user.skills
+      .filter((entry) => entry.skillId)
+      .map((entry) => ({
+        name: entry.skillId.name,
+        category: entry.skillId.category,
+        confidenceScore: Number(entry.confidenceScore || 0),
+        detectedInRepos: entry.detectedInRepos || []
+      }));
+
+    const payload = buildAnalyticsPayload(skills, user);
+    return res.json(payload);
+  } catch (error) {
+    console.error("Get analytics error:", error.message);
+    return res.status(500).json({ error: "Failed to fetch analytics" });
   }
 });
 

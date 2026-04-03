@@ -37,7 +37,9 @@ export default function ProjectsScreen() {
     try {
       setLoading(true);
       setError(null);
-      const response = await api.get<{ total: number; projects: ProjectItem[] }>("/github/projects");
+      const response = await api.get<{ total: number; projects: ProjectItem[] }>("/github/projects", {
+        timeout: 120000
+      });
       setProjects(response.data.projects || []);
     } catch (err: any) {
       setError(err?.response?.data?.error || "Failed to load projects");

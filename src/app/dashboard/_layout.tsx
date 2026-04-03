@@ -47,6 +47,14 @@ export default function DashboardLayout() {
         }}
       />
       <Tabs.Screen
+        name="analytics"
+        options={{
+          title: "Analytics",
+          tabBarLabel: "Analytics",
+          tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>📈</Text>
+        }}
+      />
+      <Tabs.Screen
         name="index"
         options={{
           title: "Profile",
