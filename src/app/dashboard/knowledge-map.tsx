@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TextInput, FlatList, TouchableOpacity } from "react-native";
 import { Animated } from "react-native";
 import {
@@ -40,6 +40,7 @@ const CAMERA_DEFAULT: CameraState = {
 
 const EDGE_MIN_ALPHA = 0.15;
 const EDGE_MAX_ALPHA = 0.55;
+const MAX_RENDERED_EDGES = 220;
 
 export default function KnowledgeMapScreen() {
   const [search, setSearch] = useState("");
@@ -54,6 +55,9 @@ export default function KnowledgeMapScreen() {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [localSelectedNode, setLocalSelectedNode] = useState<SkillGraphNode | null>(null);
   const [camera, setCamera] = useState<CameraState>(CAMERA_DEFAULT);
+  const currentCameraRef = useRef<CameraState>(CAMERA_DEFAULT);
+  const targetCameraRef = useRef<CameraState>(CAMERA_DEFAULT);
+  const cameraAnimationRef = useRef<number | null>(null);
 
   // Search logic
   useEffect(() => {
@@ -71,6 +75,54 @@ export default function KnowledgeMapScreen() {
   const initialTouchDistanceRef = useRef<number | null>(null);
   const initialZoomRef = useRef<number>(CAMERA_DEFAULT.zoom);
   const panDeltaRef = useRef({ dx: 0, dy: 0 });
+
+  useEffect(() => {
+    currentCameraRef.current = camera;
+  }, [camera]);
+
+  const smoothCameraToTarget = useCallback(() => {
+    if (cameraAnimationRef.current !== null) {
+      return;
+    }
+
+    const step = () => {
+      const current = currentCameraRef.current;
+      const target = targetCameraRef.current;
+
+      const next: CameraState = {
+        rotationX: current.rotationX + (target.rotationX - current.rotationX) * 0.22,
+        rotationY: current.rotationY + (target.rotationY - current.rotationY) * 0.22,
+        zoom: current.zoom + (target.zoom - current.zoom) * 0.2
+      };
+
+      currentCameraRef.current = next;
+      setCamera(next);
+
+      const done =
+        Math.abs(next.rotationX - target.rotationX) < 0.0015 &&
+        Math.abs(next.rotationY - target.rotationY) < 0.0015 &&
+        Math.abs(next.zoom - target.zoom) < 0.002;
+
+      if (done) {
+        currentCameraRef.current = target;
+        setCamera(target);
+        cameraAnimationRef.current = null;
+        return;
+      }
+
+      cameraAnimationRef.current = requestAnimationFrame(step);
+    };
+
+    cameraAnimationRef.current = requestAnimationFrame(step);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (cameraAnimationRef.current !== null) {
+        cancelAnimationFrame(cameraAnimationRef.current);
+      }
+    };
+  }, []);
 
   // Decouple node selection from data reload
   const fetchGraph = useCallback(async () => {
@@ -105,10 +157,22 @@ export default function KnowledgeMapScreen() {
     return buildGraphLayout(nodes, clusters, clusterMode);
   }, [nodes, clusters, clusterMode]);
 
+  const nodesById = useMemo(() => {
+    const map = new Map<string, SkillGraphNode>();
+    for (const node of nodes) {
+      map.set(node.id, node);
+    }
+    return map;
+  }, [nodes]);
+
+  const renderedEdges = useMemo(() => {
+    return edges.slice(0, Math.min(MAX_RENDERED_EDGES, edges.length));
+  }, [edges]);
+
   const projectedNodes = useMemo(() => {
     const mapped = nodePositions
       .map((position) => {
-        const node = nodes.find((entry) => entry.id === position.id);
+        const node = nodesById.get(position.id);
         if (!node) {
           return null;
         }
@@ -131,7 +195,7 @@ export default function KnowledgeMapScreen() {
       .filter((item): item is NonNullable<typeof item> => Boolean(item));
 
     return mapped.sort((a, b) => a.depth - b.depth);
-  }, [nodePositions, nodes, camera]);
+  }, [camera, nodePositions, nodesById]);
 
   const projectedNodeMap = useMemo(() => {
     const map = new Map<string, (typeof projectedNodes)[number]>();
@@ -142,7 +206,7 @@ export default function KnowledgeMapScreen() {
   }, [projectedNodes]);
 
   const visibleEdges = useMemo(() => {
-    return edges
+    return renderedEdges
       .map((edge) => {
         const source = projectedNodeMap.get(edge.source);
         const target = projectedNodeMap.get(edge.target);
@@ -169,7 +233,7 @@ export default function KnowledgeMapScreen() {
       })
       .filter((item): item is NonNullable<typeof item> => Boolean(item))
       .sort((a, b) => a.depth - b.depth);
-  }, [edges, projectedNodeMap]);
+  }, [projectedNodeMap, renderedEdges]);
 
   // Use local state for selected node for smoother transitions
   useEffect(() => {
@@ -191,7 +255,7 @@ export default function KnowledgeMapScreen() {
       .filter((edge) => edge.source === localSelectedNode.id || edge.target === localSelectedNode.id)
       .map((edge) => {
         const relatedId = edge.source === localSelectedNode.id ? edge.target : edge.source;
-        const relatedNode = nodes.find((node) => node.id === relatedId);
+        const relatedNode = nodesById.get(relatedId);
         if (!relatedNode) {
           return null;
         }
@@ -206,7 +270,7 @@ export default function KnowledgeMapScreen() {
       .filter((item): item is NonNullable<typeof item> => Boolean(item))
       .sort((a, b) => b.weight - a.weight)
       .slice(0, 5);
-  }, [localSelectedNode, edges, nodes]);
+  }, [edges, localSelectedNode, nodesById]);
 
   const panResponder = useMemo(
     () =>
@@ -217,7 +281,7 @@ export default function KnowledgeMapScreen() {
           panDeltaRef.current = { dx: 0, dy: 0 };
           if (gestureState.numberActiveTouches < 2) {
             initialTouchDistanceRef.current = null;
-            initialZoomRef.current = camera.zoom;
+            initialZoomRef.current = targetCameraRef.current.zoom;
           }
         },
         onPanResponderMove: (event, gestureState) => {
@@ -232,17 +296,18 @@ export default function KnowledgeMapScreen() {
 
             if (!initialTouchDistanceRef.current) {
               initialTouchDistanceRef.current = distance;
-              initialZoomRef.current = camera.zoom;
+              initialZoomRef.current = targetCameraRef.current.zoom;
               return;
             }
 
             const delta = distance / Math.max(initialTouchDistanceRef.current, 1);
             const nextZoom = Math.max(0.6, Math.min(4.0, initialZoomRef.current * delta));
 
-            setCamera((prev) => ({
-              ...prev,
+            targetCameraRef.current = {
+              ...targetCameraRef.current,
               zoom: nextZoom
-            }));
+            };
+            smoothCameraToTarget();
             panDeltaRef.current = { dx: gestureState.dx, dy: gestureState.dy };
             return;
           }
@@ -252,15 +317,16 @@ export default function KnowledgeMapScreen() {
           const deltaY = gestureState.dy - panDeltaRef.current.dy;
           panDeltaRef.current = { dx: gestureState.dx, dy: gestureState.dy };
 
-          setCamera((prev) => ({
-            ...prev,
-            rotationY: prev.rotationY + deltaX * 0.008,
-            rotationX: Math.max(-1.1, Math.min(1.1, prev.rotationX - deltaY * 0.006))
-          }));
+          targetCameraRef.current = {
+            ...targetCameraRef.current,
+            rotationY: targetCameraRef.current.rotationY + deltaX * 0.008,
+            rotationX: Math.max(-1.1, Math.min(1.1, targetCameraRef.current.rotationX - deltaY * 0.006))
+          };
+          smoothCameraToTarget();
         },
         onPanResponderRelease: () => {
           initialTouchDistanceRef.current = null;
-          initialZoomRef.current = camera.zoom;
+          initialZoomRef.current = targetCameraRef.current.zoom;
           panDeltaRef.current = { dx: 0, dy: 0 };
         },
         onPanResponderTerminate: () => {
@@ -268,11 +334,12 @@ export default function KnowledgeMapScreen() {
           panDeltaRef.current = { dx: 0, dy: 0 };
         }
       }),
-    [camera.zoom]
+    [smoothCameraToTarget]
   );
 
   const resetCamera = () => {
-    setCamera(CAMERA_DEFAULT);
+    targetCameraRef.current = CAMERA_DEFAULT;
+    smoothCameraToTarget();
   };
 
   if (loading) {
@@ -390,7 +457,7 @@ export default function KnowledgeMapScreen() {
           })}
         </View>
         <View style={styles.mapHintBar}>
-          <Text style={styles.mapHintText}>Drag to orbit • Pinch to zoom • Tap node for details</Text>
+          <Text style={styles.mapHintText}>Drag to orbit | Pinch to zoom | Tap node for details</Text>
         </View>
       </View>
       {/* Collapsible Drawer for Stats, Clusters, and Node Details */}

@@ -6,17 +6,69 @@ import {
   TouchableOpacity,
   Alert,
   ScrollView,
-  Switch
+  Switch,
+  ActivityIndicator
 } from "react-native";
 import { useAuth } from "../../context/AuthContext";
 import { useRouter } from "expo-router";
-import { useState } from "react";
+import { useCallback, useState } from "react";
+import { useFocusEffect } from "@react-navigation/native";
+import api from "../../utils/api";
+
+type ThemeMode = "light" | "dark";
+type PrivacyLevel = "public" | "private";
+
+interface Preferences {
+  themeMode: ThemeMode;
+  privacyLevel: PrivacyLevel;
+  autoSync: boolean;
+  notifications: boolean;
+}
+
+const DEFAULT_PREFERENCES: Preferences = {
+  themeMode: "light",
+  privacyLevel: "private",
+  autoSync: false,
+  notifications: true
+};
 
 export default function SettingsScreen() {
   const { logout, user, disconnectGitHub } = useAuth();
   const router = useRouter();
-  const [autoSync, setAutoSync] = useState(false);
-  const [notifications, setNotifications] = useState(true);
+  const [preferences, setPreferences] = useState<Preferences>(DEFAULT_PREFERENCES);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  const fetchPreferences = useCallback(async () => {
+    try {
+      setLoading(true);
+      const response = await api.get<{ preferences: Preferences }>("/auth/preferences");
+      setPreferences(response.data.preferences || DEFAULT_PREFERENCES);
+    } catch (_error) {
+      setPreferences(DEFAULT_PREFERENCES);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchPreferences();
+    }, [fetchPreferences])
+  );
+
+  const persistPreferences = async (next: Preferences) => {
+    try {
+      setSaving(true);
+      setPreferences(next);
+      await api.put("/auth/preferences", next);
+    } catch (_error) {
+      Alert.alert("Update Failed", "Could not save preferences. Please try again.");
+      fetchPreferences();
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const handleLogout = async () => {
     Alert.alert("Logout", "Are you sure you want to logout?", [
@@ -64,6 +116,15 @@ export default function SettingsScreen() {
     );
   };
 
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#007AFF" />
+        <Text style={styles.loadingText}>Loading settings...</Text>
+      </View>
+    );
+  }
+
   return (
     <ScrollView style={styles.container}>
       <View style={styles.section}>
@@ -85,7 +146,7 @@ export default function SettingsScreen() {
       </View>
 
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Sync Settings</Text>
+        <Text style={styles.sectionTitle}>Sync & Theme</Text>
 
         <View style={styles.settingItemWithToggle}>
           <View style={styles.settingContent}>
@@ -95,10 +156,11 @@ export default function SettingsScreen() {
             </Text>
           </View>
           <Switch
-            value={autoSync}
-            onValueChange={setAutoSync}
+            value={preferences.autoSync}
+            onValueChange={(value) => persistPreferences({ ...preferences, autoSync: value })}
             trackColor={{ false: "#767577", true: "#81C784" }}
-            thumbColor={autoSync ? "#4CAF50" : "#f4f3f4"}
+            thumbColor={preferences.autoSync ? "#4CAF50" : "#f4f3f4"}
+            disabled={saving}
           />
         </View>
 
@@ -110,10 +172,46 @@ export default function SettingsScreen() {
             </Text>
           </View>
           <Switch
-            value={notifications}
-            onValueChange={setNotifications}
+            value={preferences.notifications}
+            onValueChange={(value) => persistPreferences({ ...preferences, notifications: value })}
             trackColor={{ false: "#767577", true: "#81C784" }}
-            thumbColor={notifications ? "#4CAF50" : "#f4f3f4"}
+            thumbColor={preferences.notifications ? "#4CAF50" : "#f4f3f4"}
+            disabled={saving}
+          />
+        </View>
+
+        <View style={styles.settingItemWithToggle}>
+          <View style={styles.settingContent}>
+            <Text style={styles.settingLabel}>Dark Mode</Text>
+            <Text style={styles.settingDescription}>Persisted preference across sessions</Text>
+          </View>
+          <Switch
+            value={preferences.themeMode === "dark"}
+            onValueChange={(value) =>
+              persistPreferences({ ...preferences, themeMode: value ? "dark" : "light" })
+            }
+            trackColor={{ false: "#767577", true: "#90CAF9" }}
+            thumbColor={preferences.themeMode === "dark" ? "#1E3A8A" : "#f4f3f4"}
+            disabled={saving}
+          />
+        </View>
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Privacy</Text>
+        <View style={styles.settingItemWithToggle}>
+          <View style={styles.settingContent}>
+            <Text style={styles.settingLabel}>Public Profile</Text>
+            <Text style={styles.settingDescription}>Allow your portfolio link to be discoverable</Text>
+          </View>
+          <Switch
+            value={preferences.privacyLevel === "public"}
+            onValueChange={(value) =>
+              persistPreferences({ ...preferences, privacyLevel: value ? "public" : "private" })
+            }
+            trackColor={{ false: "#767577", true: "#81C784" }}
+            thumbColor={preferences.privacyLevel === "public" ? "#2E7D32" : "#f4f3f4"}
+            disabled={saving}
           />
         </View>
       </View>
@@ -178,6 +276,16 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#f8f9fa"
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#f8f9fa"
+  },
+  loadingText: {
+    marginTop: 10,
+    color: "#666"
   },
   section: {
     marginTop: 16,

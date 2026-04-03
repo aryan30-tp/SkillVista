@@ -80,7 +80,27 @@ const userSchema = new mongoose.Schema(
           default: ""
         }
       }
-    ]
+    ],
+    preferences: {
+      themeMode: {
+        type: String,
+        enum: ["light", "dark"],
+        default: "light"
+      },
+      privacyLevel: {
+        type: String,
+        enum: ["public", "private"],
+        default: "private"
+      },
+      autoSync: {
+        type: Boolean,
+        default: false
+      },
+      notifications: {
+        type: Boolean,
+        default: true
+      }
+    }
   },
   {
     timestamps: true

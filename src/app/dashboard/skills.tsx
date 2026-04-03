@@ -18,6 +18,15 @@ interface Skill {
   category: string;
   confidenceScore: number;
   detectedInRepos: string[];
+  proficiencyScore?: number;
+  projectsUsingSkill?: string[];
+  relatedConcepts?: string[];
+  usageTimeline?: Array<{ month: string; usageCount: number }>;
+  lastUsedDate?: string | null;
+  decayIndicator?: {
+    level: "low" | "medium" | "high";
+    score: number;
+  };
 }
 
 interface SkillOption {
@@ -38,6 +47,12 @@ const CATEGORY_COLORS: Record<string, string> = {
   cybersecurity: "#EF4444",
   tool: "#FF3B30",
   other: "#999"
+};
+
+const DECAY_COLORS: Record<string, string> = {
+  low: "#22C55E",
+  medium: "#F59E0B",
+  high: "#EF4444"
 };
 
 export default function SkillsScreen() {
@@ -67,7 +82,7 @@ export default function SkillsScreen() {
   const fetchSkills = async () => {
     try {
       setLoading(true);
-      const response = await api.get("/github/skills");
+      const response = await api.get("/github/skills-explorer");
       setSkills(response.data || []);
       filterSkills(response.data || [], searchText, selectedCategory);
     } catch (error) {
@@ -371,18 +386,78 @@ export default function SkillsScreen() {
               </View>
 
               <Text style={styles.confidenceText}>
-                Confidence: {Math.round(skill.confidenceScore * 100)}%
+                Proficiency: {skill.proficiencyScore ?? Math.round(skill.confidenceScore * 100)}%
               </Text>
 
-              {skill.detectedInRepos.length > 0 && (
+              {(skill.projectsUsingSkill?.length || 0) > 0 && (
                 <View style={styles.reposContainer}>
-                  <Text style={styles.reposLabel}>Detected in repositories:</Text>
+                  <Text style={styles.reposLabel}>Projects using this skill:</Text>
                   <Text style={styles.reposText}>
-                    {skill.detectedInRepos.slice(0, 3).join(", ")}
-                    {skill.detectedInRepos.length > 3 && "..."}
+                    {(skill.projectsUsingSkill || []).slice(0, 3).join(", ")}
+                    {(skill.projectsUsingSkill || []).length > 3 && "..."}
                   </Text>
                 </View>
               )}
+
+              {(skill.relatedConcepts?.length || 0) > 0 && (
+                <View style={styles.relatedConceptsContainer}>
+                  <Text style={styles.reposLabel}>Related Concepts</Text>
+                  <View style={styles.relatedConceptsWrap}>
+                    {(skill.relatedConcepts || []).slice(0, 5).map((concept, index) => (
+                      <View key={`${skill._id}-concept-${concept}-${index}`} style={styles.conceptChip}>
+                        <Text style={styles.conceptText}>{concept}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              )}
+
+              {(skill.usageTimeline?.length || 0) > 0 && (
+                <View style={styles.timelineContainer}>
+                  <Text style={styles.reposLabel}>Usage Timeline</Text>
+                  <View style={styles.timelineRow}>
+                    {(skill.usageTimeline || []).map((point, index) => {
+                      const maxUsage = Math.max(...(skill.usageTimeline || []).map((entry) => entry.usageCount), 1);
+                      const barHeight = Math.max(6, Math.round((point.usageCount / maxUsage) * 34));
+
+                      return (
+                        <View key={`${skill._id}-timeline-${point.month}-${index}`} style={styles.timelinePoint}>
+                          <View
+                            style={[
+                              styles.timelineBar,
+                              {
+                                height: barHeight,
+                                backgroundColor: CATEGORY_COLORS[skill.category] || "#999"
+                              }
+                            ]}
+                          />
+                          <Text style={styles.timelineLabel}>{point.month}</Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+                </View>
+              )}
+
+              <View style={styles.metaRow}>
+                <Text style={styles.metaTextSmall}>
+                  Last Used: {skill.lastUsedDate ? new Date(skill.lastUsedDate).toLocaleDateString() : "Not available"}
+                </Text>
+                {skill.decayIndicator ? (
+                  <View
+                    style={[
+                      styles.decayBadge,
+                      {
+                        backgroundColor: DECAY_COLORS[skill.decayIndicator.level] || "#999"
+                      }
+                    ]}
+                  >
+                    <Text style={styles.decayBadgeText}>
+                      Decay: {skill.decayIndicator.level.toUpperCase()} ({skill.decayIndicator.score})
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
             </View>
           ))
         )}
@@ -621,5 +696,70 @@ const styles = StyleSheet.create({
   reposText: {
     fontSize: 11,
     color: "#666"
+  },
+  relatedConceptsContainer: {
+    marginTop: 10
+  },
+  relatedConceptsWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    marginTop: 6
+  },
+  conceptChip: {
+    backgroundColor: "#EEF2FF",
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    marginRight: 6,
+    marginBottom: 6
+  },
+  conceptText: {
+    color: "#4338CA",
+    fontSize: 11,
+    fontWeight: "600"
+  },
+  timelineContainer: {
+    marginTop: 10
+  },
+  timelineRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    marginTop: 6
+  },
+  timelinePoint: {
+    alignItems: "center",
+    marginRight: 8
+  },
+  timelineBar: {
+    width: 10,
+    borderTopLeftRadius: 4,
+    borderTopRightRadius: 4
+  },
+  timelineLabel: {
+    marginTop: 4,
+    fontSize: 10,
+    color: "#6B7280"
+  },
+  metaRow: {
+    marginTop: 10,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center"
+  },
+  metaTextSmall: {
+    fontSize: 11,
+    color: "#6B7280",
+    flex: 1,
+    marginRight: 8
+  },
+  decayBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4
+  },
+  decayBadgeText: {
+    color: "#fff",
+    fontSize: 10,
+    fontWeight: "700"
   }
 });

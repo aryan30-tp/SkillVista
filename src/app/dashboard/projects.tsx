@@ -95,8 +95,8 @@ export default function ProjectsScreen() {
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Tech Stack</Text>
               <View style={styles.chipRow}>
-                {(project.techStack || []).slice(0, 8).map((item) => (
-                  <View key={`${project.id}-${item}`} style={styles.chip}>
+                {(project.techStack || []).slice(0, 8).map((item, index) => (
+                  <View key={`${project.id}-tech-${String(item).toLowerCase()}-${index}`} style={styles.chip}>
                     <Text style={styles.chipText}>{item}</Text>
                   </View>
                 ))}
@@ -108,8 +108,8 @@ export default function ProjectsScreen() {
               {(project.connectedSkills || []).length === 0 ? (
                 <Text style={styles.metaText}>No mapped skills yet.</Text>
               ) : (
-                project.connectedSkills.slice(0, 6).map((skill) => (
-                  <View key={`${project.id}-${skill.name}`} style={styles.skillRow}>
+                project.connectedSkills.slice(0, 6).map((skill, index) => (
+                  <View key={`${project.id}-skill-${String(skill.name).toLowerCase()}-${index}`} style={styles.skillRow}>
                     <Text style={styles.skillName}>{skill.name}</Text>
                     <Text style={styles.skillScore}>{Math.round(skill.confidenceScore * 100)}%</Text>
                   </View>

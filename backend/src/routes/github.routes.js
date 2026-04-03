@@ -150,22 +150,42 @@ const calculateComplexityScore = (analysis) => {
 
 const buildProjectTechStack = (analysis) => {
   const set = new Set();
+  const seenNormalized = new Set();
+
+  const addTech = (value) => {
+    if (!value) {
+      return;
+    }
+
+    const raw = String(value).trim();
+    if (!raw) {
+      return;
+    }
+
+    const normalized = raw.toLowerCase();
+    if (seenNormalized.has(normalized)) {
+      return;
+    }
+
+    seenNormalized.add(normalized);
+    set.add(raw);
+  };
 
   if (analysis.language) {
-    set.add(String(analysis.language));
+    addTech(analysis.language);
   }
 
   for (const dep of analysis.dependencies || []) {
     if (set.size >= 8) break;
-    set.add(dep);
+    addTech(dep);
   }
   for (const dep of analysis.ecosystemDependencies || []) {
     if (set.size >= 8) break;
-    set.add(dep);
+    addTech(dep);
   }
   for (const dep of analysis.importPackages || []) {
     if (set.size >= 8) break;
-    set.add(dep);
+    addTech(dep);
   }
 
   return Array.from(set);
@@ -180,15 +200,29 @@ const buildConnectedSkillsForProject = (analysis, userSkillMap) => {
     hasPackageJson: analysis.hasPackageJson
   });
 
-  return extracted
-    .map((entry) => {
-      const found = userSkillMap.get(String(entry.name || "").toLowerCase());
-      return {
-        name: entry.name,
-        category: entry.category,
-        confidenceScore: Number(found?.confidenceScore ?? entry.confidenceScore ?? 0)
-      };
-    })
+  const deduped = new Map();
+
+  for (const entry of extracted) {
+    const skillName = String(entry.name || "").trim();
+    if (!skillName) {
+      continue;
+    }
+
+    const found = userSkillMap.get(skillName.toLowerCase());
+    const mapped = {
+      name: skillName,
+      category: entry.category,
+      confidenceScore: Number(found?.confidenceScore ?? entry.confidenceScore ?? 0)
+    };
+
+    const dedupeKey = skillName.toLowerCase();
+    const existing = deduped.get(dedupeKey);
+    if (!existing || mapped.confidenceScore > existing.confidenceScore) {
+      deduped.set(dedupeKey, mapped);
+    }
+  }
+
+  return Array.from(deduped.values())
     .sort((a, b) => b.confidenceScore - a.confidenceScore)
     .slice(0, 6);
 };
@@ -491,6 +525,91 @@ const buildAnalyticsPayload = (skills, user) => {
       generatedAt: new Date().toISOString()
     }
   };
+};
+
+const hashSeed = (value) => {
+  let hash = 0;
+  const text = String(value || "");
+  for (let i = 0; i < text.length; i += 1) {
+    hash = (hash * 31 + text.charCodeAt(i)) % 2147483647;
+  }
+  return Math.abs(hash);
+};
+
+const buildUsageTimeline = (skillName, repoCount, confidenceScore) => {
+  const now = new Date();
+  const base = Math.max(1, Math.round(repoCount * 2 + confidenceScore * 4));
+  const seed = hashSeed(skillName);
+  const timeline = [];
+
+  for (let i = 5; i >= 0; i -= 1) {
+    const dt = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const wave = ((seed + i * 17) % 7) / 10;
+    const attenuation = 0.7 + (5 - i) * 0.07;
+    const usageCount = Math.max(0, Math.round(base * attenuation * (0.75 + wave)));
+    timeline.push({
+      month: dt.toLocaleString("en-US", { month: "short" }),
+      usageCount
+    });
+  }
+
+  return timeline;
+};
+
+const buildDecayIndicator = (lastUsedDate, confidenceScore) => {
+  if (!lastUsedDate) {
+    return {
+      level: "high",
+      score: 75
+    };
+  }
+
+  const daysSince = Math.max(0, Math.floor((Date.now() - new Date(lastUsedDate).getTime()) / (1000 * 60 * 60 * 24)));
+  const decayScore = Math.round(clamp(daysSince * 0.9 + (1 - confidenceScore) * 35, 0, 100));
+
+  if (decayScore >= 65) {
+    return { level: "high", score: decayScore };
+  }
+  if (decayScore >= 35) {
+    return { level: "medium", score: decayScore };
+  }
+  return { level: "low", score: decayScore };
+};
+
+const buildSkillsExplorerPayload = (user) => {
+  const skillEntries = user.skills.filter((entry) => entry.skillId);
+
+  return skillEntries
+    .map((entry) => {
+      const skillDoc = entry.skillId;
+      const detectedRepos = Array.isArray(entry.detectedInRepos)
+        ? entry.detectedInRepos.filter((repo) => typeof repo === "string" && repo.trim())
+        : [];
+      const projectSet = new Set(detectedRepos.filter((repo) => repo !== "manual"));
+      const confidenceScore = Number(entry.confidenceScore || 0);
+
+      const relatedConcepts = (Array.isArray(skillDoc.keywords) ? skillDoc.keywords : [])
+        .map((item) => String(item || "").trim())
+        .filter((item) => item && item.toLowerCase() !== String(skillDoc.name || "").toLowerCase())
+        .slice(0, 8);
+
+      const lastUsedDate = user.lastSkillSync || null;
+
+      return {
+        _id: skillDoc._id,
+        name: skillDoc.name,
+        category: skillDoc.category,
+        confidenceScore,
+        proficiencyScore: Math.round(confidenceScore * 100),
+        projectsUsingSkill: Array.from(projectSet).slice(0, 10),
+        relatedConcepts,
+        usageTimeline: buildUsageTimeline(skillDoc.name, projectSet.size, confidenceScore),
+        lastUsedDate,
+        decayIndicator: buildDecayIndicator(lastUsedDate, confidenceScore),
+        detectedInRepos: detectedRepos
+      };
+    })
+    .sort((a, b) => b.proficiencyScore - a.proficiencyScore);
 };
 
 
@@ -1230,6 +1349,21 @@ router.get("/skills", auth, async (req, res) => {
   } catch (error) {
     console.error("Get skills error:", error.message);
     res.status(500).json({ error: "Failed to fetch skills" });
+  }
+});
+
+router.get("/skills-explorer", auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.userId).populate("skills.skillId");
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const payload = buildSkillsExplorerPayload(user);
+    return res.json(payload);
+  } catch (error) {
+    console.error("Get skills explorer error:", error.message);
+    return res.status(500).json({ error: "Failed to fetch skills explorer" });
   }
 });
 

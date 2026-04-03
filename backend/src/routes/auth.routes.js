@@ -15,6 +15,24 @@ const {
 
 const router = express.Router();
 
+const DEFAULT_PREFERENCES = {
+  themeMode: "light",
+  privacyLevel: "private",
+  autoSync: false,
+  notifications: true
+};
+
+const sanitizePreferences = (raw) => {
+  const source = raw || {};
+
+  return {
+    themeMode: source.themeMode === "dark" ? "dark" : "light",
+    privacyLevel: source.privacyLevel === "public" ? "public" : "private",
+    autoSync: Boolean(source.autoSync),
+    notifications: Boolean(source.notifications)
+  };
+};
+
 const isAllowedMobileRedirectUri = (uri) => {
   if (!uri || typeof uri !== "string") {
     return false;
@@ -82,6 +100,7 @@ router.post("/register", async (req, res) => {
         githubId: user.githubId,
         githubUsername: user.githubUsername,
         skillExtractionStatus: user.skillExtractionStatus,
+        preferences: sanitizePreferences(user.preferences || DEFAULT_PREFERENCES),
         createdAt: user.createdAt,
         updatedAt: user.updatedAt
       }
@@ -137,6 +156,7 @@ router.post("/login", async (req, res) => {
         githubId: user.githubId,
         githubUsername: user.githubUsername,
         skillExtractionStatus: user.skillExtractionStatus,
+        preferences: sanitizePreferences(user.preferences || DEFAULT_PREFERENCES),
         createdAt: user.createdAt,
         updatedAt: user.updatedAt
       }
@@ -161,6 +181,7 @@ router.get("/me", auth, async (req, res) => {
       githubId: user.githubId,
       githubUsername: user.githubUsername,
       skillExtractionStatus: user.skillExtractionStatus,
+      preferences: sanitizePreferences(user.preferences || DEFAULT_PREFERENCES),
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
       repositoryCount: user.repositoryCount,
@@ -177,6 +198,48 @@ router.post("/logout", auth, (req, res) => {
   // For JWT, logout is mainly handled on the client by removing the token
   // In production, you might want to blacklist the token in Redis
   res.json({ message: "Logged out successfully" });
+});
+
+router.get("/preferences", auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.userId).select("preferences");
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    return res.json({
+      preferences: sanitizePreferences(user.preferences || DEFAULT_PREFERENCES)
+    });
+  } catch (error) {
+    console.error("Get preferences error:", error.message);
+    return res.status(500).json({ error: "Failed to fetch preferences" });
+  }
+});
+
+router.put("/preferences", auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.userId);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const current = sanitizePreferences(user.preferences || DEFAULT_PREFERENCES);
+    const next = {
+      ...current,
+      ...(typeof req.body === "object" && req.body ? req.body : {})
+    };
+
+    user.preferences = sanitizePreferences(next);
+    await user.save();
+
+    return res.json({
+      message: "Preferences updated",
+      preferences: sanitizePreferences(user.preferences)
+    });
+  } catch (error) {
+    console.error("Update preferences error:", error.message);
+    return res.status(500).json({ error: "Failed to update preferences" });
+  }
 });
 
 router.get("/github/url", auth, (req, res) => {
